@@ -172,12 +172,16 @@ def index():
 # Routes — API
 # ---------------------------------------------------------------------------
 
-def _node_stats(node: dict, latest_batch: dict, leaves: list = None) -> dict:
+def _node_stats(node: dict, latest_batch: dict, paused_set: set = None, leaves: list = None) -> dict:
     """Build the stats dict for a single node (leaf or group)."""
+    if paused_set is None:
+        paused_set = set()
+
     if node['host']:
         # Leaf node
+        is_paused = node['path'] in paused_set
         row = latest_batch.get(node['path'])
-        is_up = bool(row['is_up']) if row else None
+        is_up = bool(row['is_up']) if (row and not is_paused) else None
         latency = row['latency_ms'] if row else None
         last_check = row['timestamp'] if row else None
         return {
@@ -187,22 +191,26 @@ def _node_stats(node: dict, latest_batch: dict, leaves: list = None) -> dict:
             'host': node['host'],
             'ping_interval': node['ping_interval'],
             'is_up': is_up,
+            'is_paused': is_paused,
             'latency_ms': latency,
             'last_check': last_check,
-            'host_count': 1,
+            'host_count': 0 if is_paused else 1,
             'up_count': (1 if is_up else 0) if is_up is not None else 0,
             'down_count': (0 if is_up else 1) if is_up is not None else 0,
+            'paused_count': 1 if is_paused else 0,
             'uptime_24h': database.get_uptime(node['path'], 24),
             'uptime_7d': database.get_uptime(node['path'], 168),
             'uptime_30d': database.get_uptime(node['path'], 720),
         }
     else:
-        # Group node — aggregate from descendant leaves
+        # Group node — aggregate from descendant leaves, excluding paused
         if leaves is None:
             leaves = tree_mgr.get_all_leaves(node['children'])
-        leaf_paths = [l['path'] for l in leaves]
-        host_count = len(leaves)
-        up_count = sum(1 for p in leaf_paths if latest_batch.get(p) and latest_batch[p]['is_up'])
+        active_leaves = [l for l in leaves if l['path'] not in paused_set]
+        paused_count  = len(leaves) - len(active_leaves)
+        active_paths  = [l['path'] for l in active_leaves]
+        host_count    = len(active_leaves)
+        up_count      = sum(1 for p in active_paths if latest_batch.get(p) and latest_batch[p]['is_up'])
         return {
             'name': node['name'],
             'path': node['path'],
@@ -210,9 +218,10 @@ def _node_stats(node: dict, latest_batch: dict, leaves: list = None) -> dict:
             'host_count': host_count,
             'up_count': up_count,
             'down_count': host_count - up_count,
-            'uptime_24h': database.get_uptime_multi(leaf_paths, 24),
-            'uptime_7d': database.get_uptime_multi(leaf_paths, 168),
-            'uptime_30d': database.get_uptime_multi(leaf_paths, 720),
+            'paused_count': paused_count,
+            'uptime_24h': database.get_uptime_multi(active_paths, 24) if active_paths else None,
+            'uptime_7d':  database.get_uptime_multi(active_paths, 168) if active_paths else None,
+            'uptime_30d': database.get_uptime_multi(active_paths, 720) if active_paths else None,
         }
 
 
@@ -229,11 +238,12 @@ def api_node():
     all_leaves = tree_mgr.get_leaves_under(path) if path else tree_mgr.get_all_leaves()
     leaf_paths = [l['path'] for l in all_leaves]
     latest_batch = database.get_latest_results_batch(leaf_paths)
+    paused_set = database.get_all_paused()
 
     items = []
     for child in (children or []):
         child_leaves = tree_mgr.get_all_leaves(child['children']) if not child['host'] else [child]
-        items.append(_node_stats(child, latest_batch, child_leaves if not child['host'] else None))
+        items.append(_node_stats(child, latest_batch, paused_set, child_leaves if not child['host'] else None))
 
     return jsonify({
         'breadcrumb': tree_mgr.build_breadcrumb(path),
@@ -257,14 +267,17 @@ def api_reload():
 def api_summary():
     all_leaves = tree_mgr.get_all_leaves()
     leaf_paths = [l['path'] for l in all_leaves]
+    paused_set = database.get_all_paused()
     latest = database.get_latest_results_batch(leaf_paths)
-    total = len(all_leaves)
-    up = sum(1 for p in leaf_paths if latest.get(p) and latest[p]['is_up'])
+    active_paths = [p for p in leaf_paths if p not in paused_set]
+    paused_count = len(leaf_paths) - len(active_paths)
+    up = sum(1 for p in active_paths if latest.get(p) and latest[p]['is_up'])
     return jsonify({
-        'total': total,
+        'total': len(all_leaves),
         'up': up,
-        'down': total - up,
-        'uptime_24h': database.get_uptime_multi(leaf_paths, 24),
+        'down': len(active_paths) - up,
+        'paused': paused_count,
+        'uptime_24h': database.get_uptime_multi(active_paths, 24) if active_paths else None,
     })
 
 
@@ -346,24 +359,29 @@ def api_host_events():
 @app.route('/api/hosts/list')
 @login_required
 def api_hosts_list():
-    status = request.args.get('status', 'all')  # 'up', 'down', 'all'
+    status = request.args.get('status', 'all')  # 'up', 'down', 'paused', 'all'
     all_leaves = tree_mgr.get_all_leaves()
     leaf_paths = [l['path'] for l in all_leaves]
+    paused_set = database.get_all_paused()
     latest = database.get_latest_results_batch(leaf_paths)
 
     result = []
     for leaf in all_leaves:
+        is_paused = leaf['path'] in paused_set
         row = latest.get(leaf['path'])
-        is_up = bool(row['is_up']) if row else None
-        if status == 'up' and is_up is not True:
+        is_up = bool(row['is_up']) if (row and not is_paused) else None
+        if status == 'up'     and (is_paused or is_up is not True):
             continue
-        if status == 'down' and is_up is not False:
+        if status == 'down'   and (is_paused or is_up is not False):
+            continue
+        if status == 'paused' and not is_paused:
             continue
         result.append({
             'name': leaf['name'],
             'path': leaf['path'],
             'host': leaf['host'],
             'is_up': is_up,
+            'is_paused': is_paused,
             'latency_ms': row['latency_ms'] if row else None,
             'last_check': row['timestamp'] if row else None,
         })

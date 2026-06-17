@@ -70,13 +70,16 @@ a { color: var(--blue); text-decoration: none; }
   transition: border-color .2s, background .2s;
   user-select: none;
 }
-.summary-pill.up-pill   { background: rgba(72,187,120,.12); color: var(--green); }
-.summary-pill.down-pill { background: rgba(252,129,129,.12); color: var(--red); }
-.summary-pill.up-pill:hover   { border-color: var(--green); }
-.summary-pill.down-pill:hover { border-color: var(--red); }
+.summary-pill.up-pill     { background: rgba(72,187,120,.12); color: var(--green); }
+.summary-pill.down-pill   { background: rgba(252,129,129,.12); color: var(--red); }
+.summary-pill.paused-pill { background: rgba(236,201,75,.12);  color: var(--yellow); }
+.summary-pill.up-pill:hover     { border-color: var(--green); }
+.summary-pill.down-pill:hover   { border-color: var(--red); }
+.summary-pill.paused-pill:hover { border-color: var(--yellow); }
 .summary-dot { width: 7px; height: 7px; border-radius: 50%; }
 .summary-dot.g { background: var(--green); }
 .summary-dot.r { background: var(--red); }
+.summary-dot.y { background: var(--yellow); }
 
 .header-actions { margin-left: auto; display: flex; align-items: center; gap: 0.6rem; }
 .btn {
@@ -424,9 +427,14 @@ canvas#latencyCanvas {
       <span class="summary-dot r"></span>
       <span id="summaryDown">—</span> down
     </div>
+    <div class="summary-pill paused-pill" id="pillPaused" onclick="openHostModal('paused')" title="Click to see paused hosts">
+      <span class="summary-dot y"></span>
+      <span id="summaryPaused">—</span> paused
+    </div>
   </div>
   <div class="header-actions">
     <span class="refresh-ts" id="refreshTs"></span>
+    <button class="btn" onclick="navigate('')">🏠 Home</button>
     <button class="btn" onclick="reloadHosts()">⟳ Reload hosts</button>
     <button class="btn" onclick="handleRefresh()">↺ Refresh</button>
     <a href="/logout" class="btn">Sign out</a>
@@ -586,8 +594,9 @@ async function fetchSummary() {
     const r = await fetch('/api/summary');
     if (!r.ok) return;
     const d = await r.json();
-    document.getElementById('summaryUp').textContent   = d.up;
-    document.getElementById('summaryDown').textContent = d.down;
+    document.getElementById('summaryUp').textContent     = d.up;
+    document.getElementById('summaryDown').textContent   = d.down;
+    document.getElementById('summaryPaused').textContent = d.paused ?? 0;
   } catch (_) {}
 }
 
@@ -622,8 +631,9 @@ async function fetchTiles() {
 
 function renderSummary(s) {
   if (!s) return;
-  document.getElementById('summaryUp').textContent   = s.up;
-  document.getElementById('summaryDown').textContent = s.down;
+  document.getElementById('summaryUp').textContent     = s.up;
+  document.getElementById('summaryDown').textContent   = s.down;
+  document.getElementById('summaryPaused').textContent = s.paused ?? 0;
 }
 
 function renderTiles(items) {
@@ -647,11 +657,14 @@ function tileParts(item) {
   const hostLine = leaf ? `<div class="tile-host">${esc(item.host)}${isPaused ? ' <span style="color:var(--yellow);font-size:.7rem">⏸ paused</span>' : ''}</div>` : '';
 
   let counts = '';
-  if (item.host_count > 0) {
+  const hasActive = item.host_count > 0;
+  const hasPaused = (item.paused_count || 0) > 0;
+  if (hasActive || hasPaused) {
     counts = `<div class="host-counts">
-      <span><span class="cu">▲ ${item.up_count}</span><span class="cl">up</span></span>
-      <span><span class="cd">▼ ${item.down_count}</span><span class="cl">down</span></span>
-      ${!leaf ? `<span style="color:var(--muted);font-size:.7rem">${item.host_count} host${item.host_count!==1?'s':''}</span>` : ''}
+      ${hasActive ? `<span><span class="cu">▲ ${item.up_count}</span><span class="cl">up</span></span>
+      <span><span class="cd">▼ ${item.down_count}</span><span class="cl">down</span></span>` : ''}
+      ${hasPaused ? `<span><span style="color:var(--yellow)">⏸ ${item.paused_count}</span><span class="cl">paused</span></span>` : ''}
+      ${!leaf ? `<span style="color:var(--muted);font-size:.7rem">${(item.host_count||0)+(item.paused_count||0)} host${((item.host_count||0)+(item.paused_count||0))!==1?'s':''}</span>` : ''}
     </div>`;
   }
 
@@ -1134,7 +1147,7 @@ async function openHostModal(status) {
   const modal = document.getElementById('hostModal');
   const title = document.getElementById('modalTitle');
   const body  = document.getElementById('modalBody');
-  title.textContent = status === 'up' ? 'Hosts Up' : 'Hosts Down';
+  title.textContent = status === 'up' ? 'Hosts Up' : status === 'paused' ? 'Hosts Paused' : 'Hosts Down';
   body.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
   modal.style.display = 'block';
 
@@ -1146,7 +1159,7 @@ async function openHostModal(status) {
       return;
     }
     body.innerHTML = d.hosts.map(h => {
-      const dot = h.is_up ? '🟢' : '🔴';
+      const dot = h.is_paused ? '⏸' : h.is_up ? '🟢' : '🔴';
       const lat = h.latency_ms != null ? h.latency_ms.toFixed(1) + ' ms' : '';
       const age = h.last_check ? timeAgo(h.last_check) : '—';
       return `<div class="modal-row" onclick="closeModal();navigateHost('${esc(h.path)}')">
@@ -1215,6 +1228,7 @@ async function reloadHosts() {
 // ============================================================
 function tileStatus(item) {
   if (item.is_leaf) return item.is_up === true ? 's-up' : item.is_up === false ? 's-down' : 's-none';
+  if (!item.host_count && (item.paused_count || 0) > 0) return 's-warn'; // all paused
   if (!item.host_count) return 's-none';
   if (item.up_count === item.host_count)   return 's-up';
   if (item.down_count === item.host_count) return 's-down';
@@ -1223,6 +1237,7 @@ function tileStatus(item) {
 
 function dotClass(item) {
   if (item.is_leaf) return item.is_up === true ? 'up' : item.is_up === false ? 'down' : 'none';
+  if (!item.host_count && (item.paused_count || 0) > 0) return 'warn'; // all paused
   if (!item.host_count) return 'none';
   if (item.up_count === item.host_count)   return 'up';
   if (item.down_count === item.host_count) return 'down';
