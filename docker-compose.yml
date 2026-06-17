@@ -6,7 +6,7 @@ services:
       - "9000:9000"
     volumes:
       - ./data:/data
-      - ./hosts.yml:/app/hosts.yml:ro
+      - ./:/app/hostsconf:ro
       - ./config.yml:/app/config.yml:ro
     cap_add:
       - NET_RAW

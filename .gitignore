@@ -4,6 +4,10 @@ data/
 # Config with passwords — copy config.example.yml and fill in on each machine
 config.yml
 
+# Hosts file — contains real network topology, managed per-deployment
+# Copy hosts.example.cfg to hosts.cfg and edit for each site
+hosts.cfg
+
 # Python
 __pycache__/
 *.pyc

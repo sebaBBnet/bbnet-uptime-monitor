@@ -1,12 +1,29 @@
 """
-Host tree management — loads and parses hosts.yml into a navigable tree.
+Host tree management — parses Xymon-compatible hosts.cfg format.
+
+File format:
+  page <slug> <Display Name>     — top-level page (becomes a folder in the dashboard)
+  subpage <slug> <Display Name>  — sub-page under the current page
+  include <filename>             — include another file (relative to hosts.cfg location)
+  IP HOSTNAME # flags            — active host entry (ICMP-pinged)
+  # anything                     — comment / disabled host (always skipped)
+  ## or ### ...                  — also skipped (Xymon convention for disabled entries)
+
+The 'dialup' and 'testip' flags after # are accepted but ignored — all active hosts
+are monitored by ICMP ping regardless.
+
+Hierarchy rules:
+  - Hosts before the first subpage in a page go directly under that page node.
+  - Hosts after a subpage declaration go under that subpage.
+  - A new 'page' directive resets the current subpage context.
 """
+
 import re
 import threading
 import yaml
 from pathlib import Path
 
-HOSTS_FILE = Path('/app/hosts.yml')
+HOSTS_FILE = Path('/app/hostsconf/hosts.cfg')
 CONFIG_FILE = Path('/app/config.yml')
 
 _tree_data = None
@@ -14,50 +31,145 @@ _default_interval = 60
 _lock = threading.RLock()
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
 def _slugify(name: str) -> str:
     slug = name.lower().strip()
     slug = re.sub(r'[^a-z0-9]+', '-', slug)
     return slug.strip('-')
 
 
-def _process_node(node: dict, parent_path: str, inherited_interval: int) -> dict:
-    name = node['name']
-    slug = _slugify(name)
-    path = f"{parent_path}/{slug}" if parent_path else slug
-    interval = node.get('ping_interval', inherited_interval)
-    host = node.get('host')
+def _unique_path(parent: dict, candidate: str) -> str:
+    """Return candidate path, appending a suffix if it already exists among siblings."""
+    existing = {c['path'] for c in parent['children']}
+    if candidate not in existing:
+        return candidate
+    i = 2
+    while f"{candidate}-{i}" in existing:
+        i += 1
+    return f"{candidate}-{i}"
 
-    children = []
-    if not host:
-        for child in node.get('children', []):
-            children.append(_process_node(child, path, interval))
 
+# ---------------------------------------------------------------------------
+# Parser
+# ---------------------------------------------------------------------------
+
+def _parse_file(filepath: Path, default_interval: int) -> list:
+    """
+    Parse a hosts.cfg file and return a list of top-level page nodes.
+    Handles 'include' directives by recursively parsing the named file.
+    """
+    try:
+        text = filepath.read_text(encoding='utf-8', errors='replace')
+    except FileNotFoundError:
+        print(f"[tree] WARNING: hosts file not found: {filepath}")
+        return []
+
+    base_dir = filepath.parent
+    nodes = []          # top-level page nodes produced by this file
+    current_page = None
+    current_subpage = None
+
+    for raw in text.splitlines():
+        line = raw.strip()
+
+        # Skip blank lines and any line starting with # (comments + disabled hosts)
+        if not line or line.startswith('#'):
+            continue
+
+        # ── include ────────────────────────────────────────────────────────
+        if re.match(r'^include\s+', line, re.IGNORECASE):
+            inc_name = line.split(None, 1)[1].strip()
+            inc_path = base_dir / inc_name
+            inc_nodes = _parse_file(inc_path, default_interval)
+            nodes.extend(inc_nodes)
+            # After returning from an included file, reset context so the next
+            # 'page' in the main file starts fresh.
+            current_page = None
+            current_subpage = None
+            continue
+
+        # ── page ───────────────────────────────────────────────────────────
+        m = re.match(r'^page\s+(\S+)\s+(.+)$', line, re.IGNORECASE)
+        if m:
+            slug, display = m.group(1), m.group(2).strip()
+            current_page = _make_node(display, slug, slug, None, default_interval)
+            current_subpage = None
+            nodes.append(current_page)
+            continue
+
+        # ── subpage ────────────────────────────────────────────────────────
+        m = re.match(r'^subpage\s+(\S+)\s+(.+)$', line, re.IGNORECASE)
+        if m:
+            slug, display = m.group(1), m.group(2).strip()
+            if current_page is None:
+                # Orphaned subpage — create an implicit page to hold it
+                current_page = _make_node('Default', 'default', 'default', None, default_interval)
+                nodes.append(current_page)
+            path = f"{current_page['path']}/{slug}"
+            current_subpage = _make_node(display, slug, path, None, default_interval)
+            current_page['children'].append(current_subpage)
+            continue
+
+        # ── skip other Xymon directives ────────────────────────────────────
+        # title, group, group-compress, NAME:, subparent, etc.
+        if re.match(r'^(title|group|NAME:|subparent)\b', line, re.IGNORECASE):
+            continue
+
+        # ── host line: IP HOSTNAME [# flags] ──────────────────────────────
+        m = re.match(r'^(\d{1,3}(?:\.\d{1,3}){3})\s+(\S+)', line)
+        if m:
+            ip, hostname = m.group(1), m.group(2)
+            parent = current_subpage if current_subpage is not None else current_page
+            if parent is None:
+                # Host with no page context — skip silently
+                continue
+
+            host_slug = _slugify(hostname)
+            candidate = f"{parent['path']}/{host_slug}"
+            path = _unique_path(parent, candidate)
+
+            node = _make_node(hostname, host_slug, path, ip, default_interval)
+            parent['children'].append(node)
+            continue
+
+        # Everything else (empty after strip, unknown directives) is ignored.
+
+    return nodes
+
+
+def _make_node(name: str, slug: str, path: str, host, interval: int) -> dict:
     return {
         'name': name,
+        'slug': slug,
         'path': path,
-        'ping_interval': interval,
         'host': host,
-        'children': children,
+        'ping_interval': interval,
+        'children': [],
     }
 
 
+# ---------------------------------------------------------------------------
+# Public API  (same interface as the old YAML-based tree.py)
+# ---------------------------------------------------------------------------
+
 def load_tree() -> list:
     global _tree_data, _default_interval
+
     with open(CONFIG_FILE) as f:
         config = yaml.safe_load(f)
     default_interval = config.get('default_ping_interval', 60)
 
-    with open(HOSTS_FILE) as f:
-        raw = yaml.safe_load(f)
-
-    nodes = []
-    for node in (raw or []):
-        nodes.append(_process_node(node, '', default_interval))
+    nodes = _parse_file(HOSTS_FILE, default_interval)
 
     with _lock:
         _tree_data = nodes
         _default_interval = default_interval
 
+    leaf_count = len(get_all_leaves(nodes))
+    print(f"[tree] Loaded {len(nodes)} top-level pages, {leaf_count} hosts total.")
     return nodes
 
 
