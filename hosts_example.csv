@@ -1,0 +1,31 @@
+# Uptime Monitor — Example host list,,,,,
+# Columns: level1, level2, level3, name, host, ping_interval
+# - Leave level columns empty to place the host at a higher level,,,,,
+# - ping_interval is optional (inherits from config.yml default if blank),,,,,
+# - Add level4, level5, etc. columns for deeper nesting,,,
+level1,level2,level3,name,host,ping_interval
+Police Command Centre,PCC Point-to-points,,Treasury Building,10.0.200.3,60
+Police Command Centre,PCC Point-to-points,,Highgate,10.0.200.1,60
+Police Command Centre,PCC Point-to-points,,Highgate,10.0.200.18,60
+Police Command Centre,PCC Point-to-points,,General Post Office (GPO),10.0.200.5,60
+Police Command Centre,PCC Point-to-points,,Police Headquarters,10.0.200.2,60
+Police Command Centre,PCC Point-to-points,,Lazaretto,10.0.200.13,60
+Police Command Centre,PCC Point-to-points,,Warrens (CGI Building),10.0.200.8,60
+Police Command Centre,PCC Point-to-points,,Husbands Tower,10.0.200.6,60
+Police Command Centre,PCC Point-to-points,,Republic Bank,10.0.200.4,60
+Police Command Centre,PCC Point-to-points,,ICBL (Future Hospital maybe?),10.0.200.12,60
+Police Command Centre,PCC Sectors,,PCC-Sector-7,10.0.200.7,60
+Police Command Centre,PCC Sectors,,PCC-Sector-15,10.0.200.15,60
+Highgate Tower,Highgate Point-to-points,,Police Command Centre,10.0.110.18,60
+Highgate Tower,Highgate Point-to-points,,Sheraton,10.0.110.2,60
+Highgate Tower,Highgate Point-to-points,,B100,10.0.110.206,60
+Highgate Tower,Highgate Sectors,,Highgate-sector-5,10.0.110.5,60
+Highgate Tower,Highgate Sectors,,Highgate-sector-6,10.0.110.6,60
+Highgate Tower,Highgate Sectors,,Highgate-sector-7,10.0.110.7,60
+Husbands Tower,Husbands Point-to-points,,Holetown,10.0.54.2,
+Husbands Tower,Husbands Point-to-points,,Police Command Centre,10.0.54.1,
+Husbands Tower,Husbands Sectors,,Husbands-Sector-3,10.0.54.3,
+Bridgetown GPO,Point-to-points,,PCC,10.0.26.1,
+Police HQ,Point-to-points,,PCC,10.0.209.1,
+Republic Bank,Point-to-points,,PCC,10.0.59.1,
+Police Command Centre,,,PCC-OVPN-Router,10.112.194.250,30

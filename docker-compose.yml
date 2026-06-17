@@ -1,0 +1,16 @@
+services:
+  uptime-monitor:
+    build: .
+    container_name: uptime-monitor
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./data:/data
+      - ./hosts.yml:/app/hosts.yml:ro
+      - ./config.yml:/app/config.yml:ro
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1

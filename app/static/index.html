@@ -1,0 +1,1293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BBnet Uptime Monitor</title>
+<style>
+/* ---- Reset & Base ---- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #0f1117;
+  --surface:   #1a1f2e;
+  --surface2:  #242938;
+  --border:    #2d3748;
+  --text:      #e2e8f0;
+  --muted:     #718096;
+  --green:     #48bb78;
+  --yellow:    #ecc94b;
+  --red:       #fc8181;
+  --blue:      #4299e1;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  min-height: 100vh;
+}
+
+a { color: var(--blue); text-decoration: none; }
+
+/* ---- Header ---- */
+.header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 1.5rem;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+}
+.header-brand .icon { font-size: 1.2rem; }
+.header-brand .sub { font-weight: 400; color: var(--muted); font-size: 0.85rem; }
+
+.header-summary { display: flex; gap: 0.75rem; }
+.summary-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.65rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: border-color .2s, background .2s;
+  user-select: none;
+}
+.summary-pill.up-pill   { background: rgba(72,187,120,.12); color: var(--green); }
+.summary-pill.down-pill { background: rgba(252,129,129,.12); color: var(--red); }
+.summary-pill.up-pill:hover   { border-color: var(--green); }
+.summary-pill.down-pill:hover { border-color: var(--red); }
+.summary-dot { width: 7px; height: 7px; border-radius: 50%; }
+.summary-dot.g { background: var(--green); }
+.summary-dot.r { background: var(--red); }
+
+.header-actions { margin-left: auto; display: flex; align-items: center; gap: 0.6rem; }
+.btn {
+  padding: 0.35rem 0.75rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.78rem;
+  transition: background .15s;
+  white-space: nowrap;
+}
+.btn:hover { background: var(--border); }
+.refresh-ts { font-size: 0.72rem; color: var(--muted); }
+
+/* ---- Layout ---- */
+.main { padding: 1.25rem 1.5rem; max-width: 1600px; margin: 0 auto; }
+
+/* ---- Breadcrumb ---- */
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  margin-bottom: 1.1rem;
+  flex-wrap: wrap;
+}
+.bc-item { color: var(--blue); cursor: pointer; }
+.bc-item:hover { text-decoration: underline; }
+.bc-item.cur { color: var(--text); cursor: default; }
+.bc-sep { color: var(--muted); }
+
+/* ---- Tile Grid ---- */
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0.9rem;
+}
+.tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  cursor: pointer;
+  transition: border-color .2s, transform .15s, box-shadow .2s;
+  position: relative;
+  overflow: hidden;
+}
+.tile::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  border-radius: 10px 10px 0 0;
+}
+.tile.s-up::before    { background: var(--green); }
+.tile.s-down::before  { background: var(--red); }
+.tile.s-warn::before  { background: var(--yellow); }
+.tile.s-none::before  { background: var(--border); }
+.tile:hover { border-color: #4a5568; transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,.4); }
+
+.tile-hdr { display: flex; align-items: flex-start; gap: 0.55rem; margin-bottom: 0.65rem; }
+.sdot {
+  width: 9px; height: 9px; border-radius: 50%;
+  margin-top: 4px; flex-shrink: 0;
+}
+.sdot.up   { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.sdot.down { background: var(--red);   box-shadow: 0 0 6px var(--red); }
+.sdot.warn { background: var(--yellow); }
+.sdot.none { background: var(--muted); }
+.tile-name { font-size: 0.95rem; font-weight: 600; color: #fff; line-height: 1.3; word-break: break-word; }
+.tile-host { font-size: 0.7rem; color: var(--muted); font-family: 'Consolas', monospace; margin-top: 2px; }
+
+.host-counts { display: flex; gap: 0.65rem; margin-bottom: 0.65rem; font-size: 0.82rem; }
+.cu { color: var(--green); }
+.cd { color: var(--red); }
+.cl { color: var(--muted); font-size: 0.72rem; margin-left: 0.1rem; }
+
+.latency-sm { font-size: 0.72rem; color: var(--muted); margin-bottom: 0.65rem; }
+
+.uptime-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.ubadge {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.7rem;
+  display: flex; flex-direction: column; align-items: center;
+  min-width: 48px;
+}
+.ul { color: var(--muted); font-size: 0.62rem; margin-bottom: 1px; }
+.uv { font-weight: 600; font-size: 0.75rem; }
+.uv.g5 { color: #68d391; }
+.uv.g4 { color: var(--green); }
+.uv.y  { color: var(--yellow); }
+.uv.o  { color: #f6ad55; }
+.uv.r  { color: var(--red); }
+.uv.n  { color: var(--muted); }
+
+.tile-arrow { position: absolute; right: 0.85rem; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 1rem; pointer-events: none; }
+
+/* ---- Host Detail View ---- */
+#hostView { display: none; }
+.host-status-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+.host-status-dot {
+  width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
+}
+.host-status-dot.up     { background: var(--green);  box-shadow: 0 0 12px var(--green); }
+.host-status-dot.down   { background: var(--red);    box-shadow: 0 0 12px var(--red); }
+.host-status-dot.none   { background: var(--muted); }
+.host-status-dot.paused { background: var(--yellow); }
+.paused-banner { background: #744210; border: 1px solid #b7791f; border-radius:8px; padding:.6rem 1rem; margin-bottom:1rem; color:#fefcbf; font-size:.85rem; }
+.tile-paused { opacity:.55; }
+.host-status-info h2 { font-size: 1.25rem; font-weight: 700; color: #fff; }
+.host-status-info .host-ip { font-size: 0.82rem; color: var(--muted); font-family: 'Consolas', monospace; margin-top: 2px; }
+.host-meta { display: flex; gap: 1.5rem; margin-left: auto; flex-wrap: wrap; }
+.host-meta-item { text-align: center; }
+.host-meta-label { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 3px; }
+.host-meta-value { font-size: 0.9rem; font-weight: 600; color: var(--text); }
+
+.section-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+.section-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+  margin-bottom: 1rem;
+}
+
+/* Uptime stats grid */
+.uptime-grid { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+.uptime-block {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1.1rem;
+  text-align: center;
+  min-width: 90px;
+  flex: 1;
+}
+.uptime-block .period { font-size: 0.72rem; color: var(--muted); margin-bottom: 4px; }
+.uptime-block .pct { font-size: 1.35rem; font-weight: 700; }
+.uptime-block .downtime { font-size: 0.68rem; color: var(--muted); margin-top: 3px; }
+
+/* Latency stats */
+.latency-stats { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+.latency-stat { }
+.latency-stat .ls-label { font-size: 0.72rem; color: var(--muted); margin-bottom: 2px; }
+.latency-stat .ls-value { font-size: 1.1rem; font-weight: 600; }
+
+/* Graph */
+.graph-controls { display: flex; gap: 0.4rem; margin-bottom: 0.9rem; }
+.graph-btn {
+  padding: 0.3rem 0.7rem;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.78rem;
+  transition: all .15s;
+}
+.graph-btn.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+.graph-wrap { position: relative; width: 100%; }
+canvas#latencyCanvas {
+  width: 100%;
+  height: 240px;
+  display: block;
+  border-radius: 6px;
+  cursor: crosshair;
+}
+.graph-tooltip {
+  position: absolute;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.75rem;
+  pointer-events: none;
+  display: none;
+  white-space: nowrap;
+  z-index: 10;
+}
+.graph-no-data {
+  height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+  background: var(--surface2);
+  border-radius: 6px;
+}
+
+/* Event history */
+.events-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.events-table th {
+  text-align: left;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.events-table td {
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid rgba(45,55,72,.5);
+}
+.events-table tr:last-child td { border-bottom: none; }
+.event-up   { color: var(--green); font-weight: 600; }
+.event-down { color: var(--red);   font-weight: 600; }
+.events-scroll { max-height: 320px; overflow-y: auto; }
+
+/* ---- Modal ---- */
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.65);
+  z-index: 200;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 4rem 1rem 1rem;
+}
+.modal-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 600px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.modal-hdr {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.modal-hdr h3 { font-size: 1rem; font-weight: 600; }
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1.25rem;
+  cursor: pointer;
+  padding: 0 0.25rem;
+  line-height: 1;
+}
+.modal-close:hover { color: var(--text); }
+.modal-body { overflow-y: auto; padding: 0; }
+.modal-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1.25rem;
+  border-bottom: 1px solid rgba(45,55,72,.4);
+  cursor: pointer;
+  transition: background .15s;
+}
+.modal-row:last-child { border-bottom: none; }
+.modal-row:hover { background: var(--surface2); }
+.modal-row .mr-name { font-weight: 500; flex: 1; }
+.modal-row .mr-host { font-size: 0.75rem; color: var(--muted); font-family: 'Consolas', monospace; }
+.modal-row .mr-lat  { font-size: 0.75rem; color: var(--muted); margin-left: auto; }
+.modal-row .mr-age  { font-size: 0.72rem; color: var(--muted); }
+.modal-empty { padding: 2rem; text-align: center; color: var(--muted); }
+
+/* ---- Misc ---- */
+.loading {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 260px; gap: 0.75rem; color: var(--muted); font-size: 0.88rem;
+}
+.spinner {
+  width: 18px; height: 18px;
+  border: 2px solid var(--border);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.empty-state { text-align: center; padding: 3rem 2rem; color: var(--muted); }
+.empty-state h2 { margin-bottom: 0.4rem; }
+
+.toast {
+  position: fixed; bottom: 1.5rem; right: 1.5rem;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 0.65rem 1rem;
+  font-size: 0.83rem; z-index: 999;
+  opacity: 0; transform: translateY(8px);
+  transition: opacity .25s, transform .25s;
+  max-width: 300px;
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast.ok  { border-color: var(--green); }
+.toast.err { border-color: var(--red); }
+
+@media (max-width: 640px) {
+  .header { gap: 0.6rem; padding: 0 0.9rem; }
+  .main   { padding: 1rem; }
+  .tile-grid { grid-template-columns: 1fr 1fr; }
+  .host-meta { gap: 0.75rem; }
+}
+@media (max-width: 400px) {
+  .tile-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- ====== HEADER ====== -->
+<header class="header">
+  <div class="header-brand">
+    <span class="icon">📡</span>
+    <span>BBnet <span class="sub">Uptime Monitor</span></span>
+  </div>
+  <div class="header-summary">
+    <div class="summary-pill up-pill" id="pillUp" onclick="openHostModal('up')" title="Click to see hosts that are up">
+      <span class="summary-dot g"></span>
+      <span id="summaryUp">—</span> up
+    </div>
+    <div class="summary-pill down-pill" id="pillDown" onclick="openHostModal('down')" title="Click to see hosts that are down">
+      <span class="summary-dot r"></span>
+      <span id="summaryDown">—</span> down
+    </div>
+  </div>
+  <div class="header-actions">
+    <span class="refresh-ts" id="refreshTs"></span>
+    <button class="btn" onclick="reloadHosts()">⟳ Reload hosts</button>
+    <button class="btn" onclick="handleRefresh()">↺ Refresh</button>
+    <a href="/logout" class="btn">Sign out</a>
+  </div>
+</header>
+
+<!-- ====== TILE VIEW ====== -->
+<main class="main" id="tileView">
+  <nav class="breadcrumb" id="tileBreadcrumb"></nav>
+  <div id="tileContent"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+</main>
+
+<!-- ====== HOST DETAIL VIEW ====== -->
+<main class="main" id="hostView">
+  <nav class="breadcrumb" id="hostBreadcrumb"></nav>
+
+  <!-- Loading / Error states -->
+  <div id="hostLoading" style="display:none" class="loading"><div class="spinner"></div> Loading host data…</div>
+  <div id="hostError" style="display:none; background:#742a2a; border:1px solid #fc8181; border-radius:8px; padding:1rem 1.25rem; margin-bottom:1rem; color:#fed7d7; font-size:.875rem;"></div>
+
+  <!-- Status card -->
+  <div class="host-status-card" id="hostStatusCard">
+    <div class="host-status-dot none" id="hostDot"></div>
+    <div class="host-status-info">
+      <h2 id="hostName">—</h2>
+      <div class="host-ip" id="hostIp">—</div>
+    </div>
+    <div class="host-meta" id="hostMeta"></div>
+    <button id="pauseBtn" onclick="togglePause()" style="margin-left:auto;padding:.45rem 1rem;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;font-size:.82rem;white-space:nowrap">⏸ Pause</button>
+  </div>
+
+  <!-- Uptime percentages -->
+  <div class="section-card">
+    <div class="section-title">Uptime</div>
+    <div class="uptime-grid" id="uptimeGrid"></div>
+  </div>
+
+  <!-- Latency stats -->
+  <div class="section-card" id="latencyStatsCard">
+    <div class="section-title">Latency — last 24 h</div>
+    <div class="latency-stats" id="latencyStats"></div>
+  </div>
+
+  <!-- Latency graph -->
+  <div class="section-card">
+    <div class="section-title">Latency Graph</div>
+    <div class="graph-controls">
+      <button class="graph-btn active" onclick="setGraphRange(1,this)">1h</button>
+      <button class="graph-btn" onclick="setGraphRange(24,this)">24h</button>
+      <button class="graph-btn" onclick="setGraphRange(168,this)">7d</button>
+      <button class="graph-btn" onclick="setGraphRange(720,this)">30d</button>
+      <button class="graph-btn" onclick="setGraphRange(8760,this)">1y</button>
+    </div>
+    <div class="graph-wrap">
+      <canvas id="latencyCanvas"></canvas>
+      <div class="graph-tooltip" id="graphTooltip"></div>
+    </div>
+  </div>
+
+  <!-- Event history -->
+  <div class="section-card">
+    <div class="section-title">Event History</div>
+    <div class="events-scroll">
+      <table class="events-table">
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Date / Time</th>
+            <th>Duration in state</th>
+          </tr>
+        </thead>
+        <tbody id="eventsBody"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<!-- ====== HOST LIST MODAL ====== -->
+<div id="hostModal" style="display:none">
+  <div class="modal-overlay" onclick="closeModal()">
+    <div class="modal-box" onclick="event.stopPropagation()">
+      <div class="modal-hdr">
+        <h3 id="modalTitle">Hosts</h3>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body" id="modalBody">
+        <div class="loading"><div class="spinner"></div> Loading…</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================================================
+// State
+// ============================================================
+let viewMode      = 'tiles';   // 'tiles' | 'host'
+let currentPath   = '';        // group path for tile view
+let currentHost   = '';        // leaf path for host view
+let graphHours    = 1;
+let graphData     = null;
+let autoTimer     = null;
+let currentHostPaused = false;
+let pausedSet     = new Set(); // all paused paths (for tile view)
+const AUTO_MS     = 30000;
+
+// ============================================================
+// Routing via URL hash
+// ============================================================
+function navigate(path) {
+  currentPath = path;
+  viewMode = 'tiles';
+  window.location.hash = path ? '#' + path : '#';
+  fetchTiles();
+}
+
+function navigateHost(path) {
+  currentHost = path;
+  viewMode = 'host';
+  window.location.hash = '#host:' + path;
+  fetchHostDetail();
+}
+
+window.addEventListener('hashchange', routeFromHash);
+
+function routeFromHash() {
+  const hash = window.location.hash.replace('#', '');
+  if (hash.startsWith('host:')) {
+    const p = hash.slice(5);
+    if (p !== currentHost || viewMode !== 'host') {
+      currentHost = p;
+      viewMode = 'host';
+      fetchHostDetail();
+    }
+  } else {
+    const p = hash;
+    if (p !== currentPath || viewMode !== 'tiles') {
+      currentPath = p;
+      viewMode = 'tiles';
+      fetchTiles();
+    }
+  }
+}
+
+function handleRefresh() {
+  if (viewMode === 'host') fetchHostDetail(true);
+  else fetchTiles();
+}
+
+// ============================================================
+// Summary
+// ============================================================
+async function fetchSummary() {
+  try {
+    const r = await fetch('/api/summary');
+    if (!r.ok) return;
+    const d = await r.json();
+    document.getElementById('summaryUp').textContent   = d.up;
+    document.getElementById('summaryDown').textContent = d.down;
+  } catch (_) {}
+}
+
+// ============================================================
+// Tile view
+// ============================================================
+async function fetchTiles() {
+  showView('tiles');
+  document.getElementById('tileContent').innerHTML =
+    '<div class="loading"><div class="spinner"></div> Loading…</div>';
+  scheduleAuto();
+
+  try {
+    const [nr, sr, pr] = await Promise.all([
+      fetch('/api/node?path=' + encodeURIComponent(currentPath)),
+      fetch('/api/summary'),
+      fetch('/api/host/paused-list'),
+    ]);
+    if (nr.status === 401) { location.href = '/login'; return; }
+    const node = await nr.json();
+    const sum  = sr.ok ? await sr.json() : null;
+    if (pr.ok) { const pd = await pr.json(); pausedSet = new Set(pd.paused || []); }
+    renderBreadcrumb('tileBreadcrumb', node.breadcrumb, false);
+    renderSummary(sum);
+    renderTiles(node.items);
+    stamp();
+  } catch (e) {
+    document.getElementById('tileContent').innerHTML =
+      '<div class="empty-state"><h2>Failed to load</h2><p>' + esc(e.message) + '</p></div>';
+  }
+}
+
+function renderSummary(s) {
+  if (!s) return;
+  document.getElementById('summaryUp').textContent   = s.up;
+  document.getElementById('summaryDown').textContent = s.down;
+}
+
+function renderTiles(items) {
+  const el = document.getElementById('tileContent');
+  if (!items || !items.length) {
+    el.innerHTML = '<div class="empty-state"><h2>No hosts here</h2><p>Add entries to hosts.yml and reload.</p></div>';
+    return;
+  }
+  el.innerHTML = '<div class="tile-grid">' + items.map(tileParts).join('') + '</div>';
+}
+
+function tileParts(item) {
+  const isPaused = item.is_leaf && pausedSet.has(item.path);
+  const sc = isPaused ? 'tile paused' : tileStatus(item);
+  const dc = isPaused ? 'warn' : dotClass(item);
+  const leaf = item.is_leaf;
+  const click = leaf
+    ? `onclick="navigateHost('${esc(item.path)}')"`
+    : `onclick="navigate('${esc(item.path)}')"`;
+
+  const hostLine = leaf ? `<div class="tile-host">${esc(item.host)}${isPaused ? ' <span style="color:var(--yellow);font-size:.7rem">⏸ paused</span>' : ''}</div>` : '';
+
+  let counts = '';
+  if (item.host_count > 0) {
+    counts = `<div class="host-counts">
+      <span><span class="cu">▲ ${item.up_count}</span><span class="cl">up</span></span>
+      <span><span class="cd">▼ ${item.down_count}</span><span class="cl">down</span></span>
+      ${!leaf ? `<span style="color:var(--muted);font-size:.7rem">${item.host_count} host${item.host_count!==1?'s':''}</span>` : ''}
+    </div>`;
+  }
+
+  let latLine = '';
+  if (leaf && item.latency_ms != null)
+    latLine = `<div class="latency-sm">Latency: ${item.latency_ms.toFixed(1)} ms</div>`;
+
+  const u24  = fp(item.uptime_24h);
+  const u7d  = fp(item.uptime_7d);
+  const u30d = fp(item.uptime_30d);
+  const badges = `<div class="uptime-row">
+    <div class="ubadge"><span class="ul">24h</span><span class="uv ${u24.c}">${u24.t}</span></div>
+    <div class="ubadge"><span class="ul">7d</span><span class="uv ${u7d.c}">${u7d.t}</span></div>
+    <div class="ubadge"><span class="ul">30d</span><span class="uv ${u30d.c}">${u30d.t}</span></div>
+  </div>`;
+
+  const arrow = !leaf ? '<span class="tile-arrow">›</span>' : '';
+
+  const tileClass = isPaused ? 'tile tile-paused' : `tile ${sc}`;
+  return `<div class="${tileClass}" ${click}>
+    <div class="tile-hdr">
+      <span class="sdot ${dc}"></span>
+      <div><div class="tile-name">${esc(item.name)}</div>${hostLine}</div>
+    </div>
+    ${counts}${latLine}${badges}${arrow}
+  </div>`;
+}
+
+// ============================================================
+// Host detail view
+// ============================================================
+async function fetchHostDetail(quietRefresh = false) {
+  showView('host');
+  if (!quietRefresh) resetHostView();
+  setHostLoading(true);
+  scheduleAuto();
+
+  try {
+    const r = await fetch('/api/host?path=' + encodeURIComponent(currentHost));
+    if (r.status === 401) { location.href = '/login'; return; }
+
+    let d;
+    try { d = await r.json(); } catch (_) { d = {}; }
+
+    if (!r.ok) {
+      setHostError('Could not load host — ' + (d.error || 'HTTP ' + r.status) + '. Path: ' + currentHost);
+      return;
+    }
+
+    // Fetch pause state in parallel
+    let paused = false;
+    try {
+      const pr = await fetch('/api/host/paused-list');
+      if (pr.ok) {
+        const pd = await pr.json();
+        paused = (pd.paused || []).includes(currentHost);
+      }
+    } catch (_) {}
+
+    renderBreadcrumb('hostBreadcrumb', d.breadcrumb || [], true);
+    renderHostStatus(d, paused);
+    renderUptimeGrid(d);
+    renderLatencyStats(d);
+    setPauseBtn(paused);
+    if (paused) {
+      const errEl = document.getElementById('hostError');
+      if (errEl) {
+        errEl.innerHTML = '⏸ Monitoring paused for this host. Click <strong>Resume</strong> to restart pinging.';
+        errEl.style.background = '#744210';
+        errEl.style.borderColor = '#b7791f';
+        errEl.style.color = '#fefcbf';
+        errEl.style.display = 'block';
+      }
+    }
+    fetchGraph();
+    fetchEvents();
+    fetchSummary();
+    stamp();
+  } catch (e) {
+    setHostError('Unexpected error: ' + e.message);
+    console.error('[fetchHostDetail]', e);
+  } finally {
+    setHostLoading(false);
+  }
+}
+
+function setHostLoading(show) {
+  const el = document.getElementById('hostLoading');
+  if (el) el.style.display = show ? 'flex' : 'none';
+}
+
+function setHostError(msg) {
+  const el = document.getElementById('hostError');
+  if (!el) return;
+  el.innerHTML = '⚠️ ' + esc(msg);
+  el.style.display = 'block';
+}
+
+function resetHostView() {
+  document.getElementById('hostDot').className = 'host-status-dot none';
+  document.getElementById('hostName').textContent = '—';
+  document.getElementById('hostIp').textContent   = '—';
+  document.getElementById('hostMeta').innerHTML   = '';
+  document.getElementById('uptimeGrid').innerHTML = '';
+  document.getElementById('latencyStats').innerHTML = '';
+  document.getElementById('eventsBody').innerHTML   = '';
+  clearCanvas();
+  const errEl = document.getElementById('hostError');
+  if (errEl) { errEl.style.display = 'none'; errEl.innerHTML = ''; }
+  setPauseBtn(false);
+}
+
+function setPauseBtn(paused) {
+  currentHostPaused = paused;
+  const btn = document.getElementById('pauseBtn');
+  if (!btn) return;
+  if (paused) {
+    btn.textContent = '▶ Resume';
+    btn.style.borderColor = 'var(--yellow)';
+    btn.style.color = 'var(--yellow)';
+  } else {
+    btn.textContent = '⏸ Pause';
+    btn.style.borderColor = 'var(--border)';
+    btn.style.color = 'var(--text)';
+  }
+}
+
+async function togglePause() {
+  const action = currentHostPaused ? 'resume' : 'pause';
+  try {
+    const r = await fetch(`/api/host/${action}?path=${encodeURIComponent(currentHost)}`, { method: 'POST' });
+    if (!r.ok) return;
+    setPauseBtn(!currentHostPaused);
+    if (!currentHostPaused) {
+      // Just paused — show banner
+      const errEl = document.getElementById('hostError');
+      if (errEl) {
+        errEl.innerHTML = '⏸ Monitoring paused for this host. Click <strong>Resume</strong> to restart pinging.';
+        errEl.style.background = '#744210';
+        errEl.style.borderColor = '#b7791f';
+        errEl.style.color = '#fefcbf';
+        errEl.style.display = 'block';
+      }
+    } else {
+      const errEl = document.getElementById('hostError');
+      if (errEl) errEl.style.display = 'none';
+    }
+    fetchSummary();
+  } catch (e) { console.error('[togglePause]', e); }
+}
+
+function renderHostStatus(d, paused = false) {
+  const dot = document.getElementById('hostDot');
+  dot.className = 'host-status-dot ' + (paused ? 'paused' : d.is_up === true ? 'up' : d.is_up === false ? 'down' : 'none');
+  document.getElementById('hostName').textContent = d.name;
+  document.getElementById('hostIp').textContent   = d.host;
+
+  const statusText = paused ? '⏸ Paused' : d.is_up === true ? '● UP' : d.is_up === false ? '● DOWN' : '— Unknown';
+  const statusColor = paused ? 'var(--yellow)' : d.is_up === true ? 'var(--green)' : d.is_up === false ? 'var(--red)' : 'var(--muted)';
+
+  document.getElementById('hostMeta').innerHTML = `
+    <div class="host-meta-item">
+      <div class="host-meta-label">Status</div>
+      <div class="host-meta-value" style="color:${statusColor}">${statusText}</div>
+    </div>
+    <div class="host-meta-item">
+      <div class="host-meta-label">Latency</div>
+      <div class="host-meta-value">${d.latency_ms != null ? d.latency_ms.toFixed(1) + ' ms' : '—'}</div>
+    </div>
+    <div class="host-meta-item">
+      <div class="host-meta-label">Last check</div>
+      <div class="host-meta-value">${d.last_check ? timeAgo(d.last_check) : '—'}</div>
+    </div>
+    <div class="host-meta-item">
+      <div class="host-meta-label">Ping every</div>
+      <div class="host-meta-value">${d.ping_interval}s</div>
+    </div>
+    <div class="host-meta-item">
+      <div class="host-meta-label">Outages 30d</div>
+      <div class="host-meta-value">${d.outages_30d}</div>
+    </div>
+  `;
+}
+
+function renderUptimeGrid(d) {
+  const periods = [
+    { label: '1 hour',   val: d.uptime_1h },
+    { label: '24 hours', val: d.uptime_24h },
+    { label: '7 days',   val: d.uptime_7d },
+    { label: '30 days',  val: d.uptime_30d },
+    { label: '1 year',   val: d.uptime_1y },
+  ];
+  document.getElementById('uptimeGrid').innerHTML = periods.map(p => {
+    const f = fp(p.val);
+    const downMins = p.val != null ? Math.round((100 - p.val) / 100 * periodHours(p.label) * 60) : null;
+    const downStr = downMins != null ? fmtMins(downMins) + ' down' : '';
+    return `<div class="uptime-block">
+      <div class="period">${p.label}</div>
+      <div class="pct ${f.c}">${f.t}</div>
+      ${downStr ? `<div class="downtime">${downStr}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function periodHours(label) {
+  if (label.includes('hour')) return label.includes('24') ? 24 : 1;
+  if (label.includes('7'))  return 168;
+  if (label.includes('30')) return 720;
+  if (label.includes('year')) return 8760;
+  return 24;
+}
+
+function fmtMins(m) {
+  if (m < 1)     return '< 1 min';
+  if (m < 60)    return m + ' min';
+  const h = Math.floor(m / 60), rem = m % 60;
+  return h + 'h ' + (rem ? rem + 'm' : '');
+}
+
+function renderLatencyStats(d) {
+  const el = document.getElementById('latencyStats');
+  if (!d.latency_avg_24h) { el.innerHTML = '<span style="color:var(--muted);font-size:.82rem">No latency data yet</span>'; return; }
+  el.innerHTML = `
+    <div class="latency-stat"><div class="ls-label">Average</div><div class="ls-value">${d.latency_avg_24h.toFixed(2)} ms</div></div>
+    <div class="latency-stat"><div class="ls-label">Minimum</div><div class="ls-value" style="color:var(--green)">${d.latency_min_24h.toFixed(2)} ms</div></div>
+    <div class="latency-stat"><div class="ls-label">Maximum</div><div class="ls-value" style="color:var(--yellow)">${d.latency_max_24h.toFixed(2)} ms</div></div>
+  `;
+}
+
+// ============================================================
+// Latency Graph (Canvas)
+// ============================================================
+function setGraphRange(h, btn) {
+  graphHours = h;
+  document.querySelectorAll('.graph-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  fetchGraph();
+}
+
+async function fetchGraph() {
+  try {
+    const r = await fetch(`/api/host/graph?path=${encodeURIComponent(currentHost)}&hours=${graphHours}`);
+    graphData = await r.json();
+    drawGraph();
+  } catch (_) { clearCanvas(); }
+}
+
+function clearCanvas() {
+  const c = document.getElementById('latencyCanvas');
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+}
+
+function drawGraph() {
+  const canvas = document.getElementById('latencyCanvas');
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.offsetWidth || 800;
+  const cssH = 240;
+  canvas.width  = cssW * dpr;
+  canvas.height = cssH * dpr;
+  canvas.style.height = cssH + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const W = cssW, H = cssH;
+  const PAD = { top: 12, right: 16, bottom: 36, left: 58 };
+  const iW = W - PAD.left - PAD.right;
+  const iH = H - PAD.top  - PAD.bottom;
+
+  const { points, down_periods, since, now } = graphData;
+
+  if (!points || points.length === 0) {
+    ctx.fillStyle = '#1a1f2e';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#718096';
+    ctx.font = '13px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText('No data yet for this time range', W / 2, H / 2);
+    return;
+  }
+
+  const xS = t => PAD.left + ((t - since) / (now - since)) * iW;
+  const validLat = points.filter(p => p.avg_latency != null).map(p => p.avg_latency);
+  const rawMax = validLat.length ? Math.max(...validLat) : 10;
+  const yMax = Math.max(rawMax * 1.15, 1);
+  const yS = v => PAD.top + iH - (v / yMax) * iH;
+
+  // Background
+  ctx.fillStyle = '#1a1f2e';
+  ctx.fillRect(0, 0, W, H);
+
+  // Down period shading
+  ctx.fillStyle = 'rgba(252,129,129,0.18)';
+  for (const p of (down_periods || [])) {
+    const x1 = Math.max(xS(p.start), PAD.left);
+    const x2 = Math.min(xS(p.end),   PAD.left + iW);
+    if (x2 > x1) ctx.fillRect(x1, PAD.top, x2 - x1, iH);
+  }
+
+  // Grid lines + Y labels
+  const gridN = 4;
+  ctx.strokeStyle = '#2d3748';
+  ctx.lineWidth = 1;
+  ctx.font = '10px system-ui';
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= gridN; i++) {
+    const y = PAD.top + (i / gridN) * iH;
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + iW, y); ctx.stroke();
+    const val = yMax * (1 - i / gridN);
+    ctx.fillStyle = '#718096';
+    ctx.fillText(val < 10 ? val.toFixed(1) : Math.round(val), PAD.left - 5, y + 3.5);
+  }
+  ctx.fillStyle = '#4a5568';
+  ctx.font = '9px system-ui';
+  ctx.textAlign = 'right';
+  ctx.fillText('ms', PAD.left - 5, PAD.top - 2);
+
+  // X axis labels
+  const timeLabels = genTimeLabels(since, now, Math.floor(iW / 80));
+  ctx.fillStyle = '#718096';
+  ctx.font = '10px system-ui';
+  ctx.textAlign = 'center';
+  for (const tl of timeLabels) {
+    const x = xS(tl.t);
+    if (x < PAD.left + 10 || x > PAD.left + iW - 10) continue;
+    ctx.fillText(tl.label, x, H - 8);
+    ctx.beginPath();
+    ctx.strokeStyle = '#2d3748';
+    ctx.lineWidth = 0.5;
+    ctx.moveTo(x, PAD.top + iH);
+    ctx.lineTo(x, PAD.top + iH + 4);
+    ctx.stroke();
+  }
+
+  // Latency area fill
+  const vp = points.filter(p => p.avg_latency != null);
+  if (vp.length > 1) {
+    ctx.beginPath();
+    vp.forEach((p, i) => {
+      const x = xS(p.bucket + (p.bucket === vp[i].bucket ? 0 : 0));
+      const y = yS(p.avg_latency);
+      if (i === 0) { ctx.moveTo(x, PAD.top + iH); ctx.lineTo(x, y); }
+      else ctx.lineTo(x, y);
+    });
+    const lastX = xS(vp[vp.length - 1].bucket);
+    ctx.lineTo(lastX, PAD.top + iH);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(66,153,225,0.1)';
+    ctx.fill();
+
+    // Line
+    ctx.beginPath();
+    ctx.strokeStyle = '#4299e1';
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round';
+    vp.forEach((p, i) => {
+      const x = xS(p.bucket), y = yS(p.avg_latency);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+
+  // Border
+  ctx.strokeStyle = '#4a5568';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(PAD.left, PAD.top, iW, iH);
+
+  // ms unit label on y-axis
+  ctx.save();
+  ctx.translate(12, PAD.top + iH / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillStyle = '#718096';
+  ctx.font = '10px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText('Latency (ms)', 0, 0);
+  ctx.restore();
+
+  // Store PAD/scales for tooltip
+  canvas._gfx = { PAD, iW, iH, xS, yS, yMax, since, now, points: vp, down_periods };
+}
+
+function genTimeLabels(since, now, count) {
+  const span = now - since;
+  const step = Math.ceil(span / count / 60) * 60;
+  const labels = [];
+  const first = Math.ceil(since / step) * step;
+  for (let t = first; t <= now; t += step) {
+    labels.push({ t, label: fmtTime(t, span) });
+  }
+  return labels;
+}
+
+function fmtTime(ts, span) {
+  const d = new Date(ts * 1000);
+  if (span <= 3600)   return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+  if (span <= 86400)  return d.getHours().toString().padStart(2,'0') + ':00';
+  if (span <= 604800) return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()] + ' ' + d.getHours().toString().padStart(2,'0') + 'h';
+  return (d.getMonth()+1) + '/' + d.getDate();
+}
+
+// Graph tooltip
+document.getElementById('latencyCanvas').addEventListener('mousemove', function(e) {
+  const g = this._gfx;
+  if (!g || !g.points.length) return;
+  const rect = this.getBoundingClientRect();
+  const mx = (e.clientX - rect.left);
+  const PAD = g.PAD;
+  if (mx < PAD.left || mx > PAD.left + g.iW) { document.getElementById('graphTooltip').style.display='none'; return; }
+
+  // Find nearest point
+  const t = g.since + ((mx - PAD.left) / g.iW) * (g.now - g.since);
+  let nearest = g.points[0];
+  for (const p of g.points) {
+    if (Math.abs(p.bucket - t) < Math.abs(nearest.bucket - t)) nearest = p;
+  }
+
+  const tip = document.getElementById('graphTooltip');
+  const isDown = (g.down_periods || []).some(p => nearest.bucket >= p.start && nearest.bucket <= p.end);
+  tip.innerHTML = `<strong>${fmtDateTime(nearest.bucket)}</strong><br>
+    Latency: ${nearest.avg_latency != null ? nearest.avg_latency.toFixed(2) + ' ms' : '—'}<br>
+    ${nearest.min_latency != null ? 'Min: ' + nearest.min_latency.toFixed(1) + ' ms &nbsp; Max: ' + nearest.max_latency.toFixed(1) + ' ms<br>' : ''}
+    Status: <span style="color:${isDown?'var(--red)':'var(--green)'}">${isDown?'Down':'Up'}</span>`;
+
+  const tipX = e.clientX - rect.left + 12;
+  const tipY = e.clientY - rect.top - 60;
+  tip.style.left = Math.min(tipX, rect.width - 180) + 'px';
+  tip.style.top  = Math.max(tipY, 4) + 'px';
+  tip.style.display = 'block';
+});
+document.getElementById('latencyCanvas').addEventListener('mouseleave', function() {
+  document.getElementById('graphTooltip').style.display = 'none';
+});
+
+// ============================================================
+// Event history
+// ============================================================
+async function fetchEvents() {
+  try {
+    const r = await fetch(`/api/host/events?path=${encodeURIComponent(currentHost)}&limit=100`);
+    const d = await r.json();
+    renderEvents(d.events);
+  } catch (_) {}
+}
+
+function renderEvents(events) {
+  const tbody = document.getElementById('eventsBody');
+  if (!events || !events.length) {
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:1.5rem">No events recorded yet</td></tr>';
+    return;
+  }
+  tbody.innerHTML = events.map(ev => {
+    const isUp = ev.is_up;
+    const icon = isUp ? '▲ UP' : '▼ DOWN';
+    const cls  = isUp ? 'event-up' : 'event-down';
+    const dur  = ev.duration_seconds != null ? fmtDuration(ev.duration_seconds) : (ev.end_timestamp == null ? 'ongoing' : '—');
+    return `<tr>
+      <td><span class="${cls}">${icon}</span></td>
+      <td>${fmtDateTime(ev.timestamp)}</td>
+      <td>${dur}</td>
+    </tr>`;
+  }).join('');
+}
+
+function fmtDuration(s) {
+  if (s < 60)    return s + 's';
+  if (s < 3600)  return Math.floor(s/60) + 'm ' + (s%60) + 's';
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60);
+  return h + 'h ' + m + 'm';
+}
+
+function fmtDateTime(ts) {
+  const d = new Date(ts * 1000);
+  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+}
+
+// ============================================================
+// Host List Modal
+// ============================================================
+async function openHostModal(status) {
+  const modal = document.getElementById('hostModal');
+  const title = document.getElementById('modalTitle');
+  const body  = document.getElementById('modalBody');
+  title.textContent = status === 'up' ? 'Hosts Up' : 'Hosts Down';
+  body.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
+  modal.style.display = 'block';
+
+  try {
+    const r = await fetch('/api/hosts/list?status=' + status);
+    const d = await r.json();
+    if (!d.hosts.length) {
+      body.innerHTML = `<div class="modal-empty">No hosts ${status}</div>`;
+      return;
+    }
+    body.innerHTML = d.hosts.map(h => {
+      const dot = h.is_up ? '🟢' : '🔴';
+      const lat = h.latency_ms != null ? h.latency_ms.toFixed(1) + ' ms' : '';
+      const age = h.last_check ? timeAgo(h.last_check) : '—';
+      return `<div class="modal-row" onclick="closeModal();navigateHost('${esc(h.path)}')">
+        <span>${dot}</span>
+        <span class="mr-name">${esc(h.name)}</span>
+        <span class="mr-host">${esc(h.host)}</span>
+        ${lat ? `<span class="mr-lat">${lat}</span>` : ''}
+        <span class="mr-age">${age}</span>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    body.innerHTML = `<div class="modal-empty">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+function closeModal() {
+  document.getElementById('hostModal').style.display = 'none';
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+// ============================================================
+// View switching
+// ============================================================
+function showView(mode) {
+  document.getElementById('tileView').style.display = mode === 'tiles' ? 'block' : 'none';
+  document.getElementById('hostView').style.display = mode === 'host'  ? 'block' : 'none';
+}
+
+// ============================================================
+// Breadcrumb
+// ============================================================
+function renderBreadcrumb(elId, crumbs, isHost) {
+  const el = document.getElementById(elId);
+  el.innerHTML = crumbs.map((c, i) => {
+    const last = i === crumbs.length - 1;
+    const sep  = i < crumbs.length - 1 ? '<span class="bc-sep">›</span>' : '';
+    if (last) return `<span class="bc-item cur">${esc(c.name)}</span>${sep}`;
+    return `<span class="bc-item" onclick="navigate('${esc(c.path)}')">${esc(c.name)}</span>${sep}`;
+  }).join('');
+}
+
+// ============================================================
+// Auto refresh + reload
+// ============================================================
+function scheduleAuto() {
+  clearTimeout(autoTimer);
+  autoTimer = setTimeout(() => {
+    if (viewMode === 'host') fetchHostDetail(true);
+    else fetchTiles();
+    fetchSummary();
+  }, AUTO_MS);
+}
+
+async function reloadHosts() {
+  try {
+    const r = await fetch('/api/reload', { method: 'POST' });
+    const d = await r.json();
+    toast(d.message, r.ok ? 'ok' : 'err');
+    if (r.ok) handleRefresh();
+  } catch (e) { toast('Reload failed', 'err'); }
+}
+
+// ============================================================
+// Helpers
+// ============================================================
+function tileStatus(item) {
+  if (item.is_leaf) return item.is_up === true ? 's-up' : item.is_up === false ? 's-down' : 's-none';
+  if (!item.host_count) return 's-none';
+  if (item.up_count === item.host_count)   return 's-up';
+  if (item.down_count === item.host_count) return 's-down';
+  return 's-warn';
+}
+
+function dotClass(item) {
+  if (item.is_leaf) return item.is_up === true ? 'up' : item.is_up === false ? 'down' : 'none';
+  if (!item.host_count) return 'none';
+  if (item.up_count === item.host_count)   return 'up';
+  if (item.down_count === item.host_count) return 'down';
+  return 'warn';
+}
+
+function fp(val) {
+  if (val == null) return { t: '—', c: 'n' };
+  const t = val.toFixed(2) + '%';
+  if (val >= 99.9) return { t, c: 'g5' };
+  if (val >= 99.0) return { t, c: 'g4' };
+  if (val >= 95.0) return { t, c: 'y' };
+  if (val >= 90.0) return { t, c: 'o' };
+  return { t, c: 'r' };
+}
+
+function timeAgo(ts) {
+  const d = Math.floor(Date.now() / 1000) - ts;
+  if (d < 5)    return 'just now';
+  if (d < 60)   return d + 's ago';
+  if (d < 3600) return Math.floor(d / 60) + 'm ago';
+  return Math.floor(d / 3600) + 'h ago';
+}
+
+function stamp() {
+  document.getElementById('refreshTs').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+function esc(s) {
+  return String(s ?? '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+let _toastTimer;
+function toast(msg, type = '') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast show' + (type ? ' ' + type : '');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.className = 'toast', 3500);
+}
+
+// Redraw graph on window resize
+let _resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(_resizeTimer);
+  _resizeTimer = setTimeout(() => { if (viewMode === 'host' && graphData) drawGraph(); }, 200);
+});
+
+// ============================================================
+// Init
+// ============================================================
+const initHash = window.location.hash.replace('#', '');
+if (initHash.startsWith('host:')) {
+  currentHost = initHash.slice(5);
+  viewMode = 'host';
+  showView('host');
+  fetchHostDetail();
+} else {
+  currentPath = initHash;
+  showView('tiles');
+  fetchTiles();
+}
+fetchSummary();
+</script>
+</body>
+</html>

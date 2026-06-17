@@ -1,0 +1,14 @@
+# SQLite database (persisted in Docker volume, not in repo)
+data/
+
+# Config with passwords — copy config.example.yml and fill in on each machine
+config.yml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# OS
+.DS_Store
+Thumbs.db

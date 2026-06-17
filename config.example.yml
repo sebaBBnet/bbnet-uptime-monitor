@@ -1,0 +1,35 @@
+# Uptime Monitor Configuration
+# Copy this file to config.yml and fill in your values.
+
+# Web UI password
+password: "changeme"
+
+# Web server port
+port: 9000
+
+# Default ping interval in seconds (can be overridden per node in hosts.yml)
+default_ping_interval: 60
+
+# Ping timeout in seconds
+ping_timeout: 1
+
+# Number of pings sent per burst. Host is DOWN only if ALL pings fail.
+ping_count: 5
+
+# Max concurrent ping workers
+max_ping_workers: 50
+
+# Secret key for session encryption (leave as "auto" to generate automatically)
+secret_key: "auto"
+
+# Email alerts
+alerts:
+  enabled: false                      # Set to true to enable email alerts
+  smtp_host: "smtp.gmail.com"
+  smtp_port: 587
+  smtp_user: "your@email.com"
+  smtp_password: "your-app-password"
+  from_address: "uptime@yourdomain.com"
+  to_addresses:
+    - "admin@yourdomain.com"
+  daily_summary_time: "08:00"         # 24h format, server local time
