@@ -298,6 +298,59 @@ def get_all_paused() -> set:
         return {row['host_path'] for row in rows}
 
 
+def get_outages_in_period(host_paths: list, since: int, until: int = None) -> list:
+    """
+    Returns all down-periods for the given hosts that overlap with [since, until].
+    Looks back up to 7 days before `since` to catch outages that started earlier.
+    Each item: {host_path, start, end, duration_seconds, ongoing}
+    """
+    if not host_paths:
+        return []
+    if until is None:
+        until = int(time.time())
+
+    extended_since = since - 7 * 86400
+    placeholders = ','.join('?' * len(host_paths))
+
+    with get_conn() as conn:
+        rows = conn.execute(f"""
+            WITH ordered AS (
+                SELECT host_path, timestamp, is_up,
+                       LAG(is_up) OVER (PARTITION BY host_path ORDER BY timestamp) AS prev_is_up
+                FROM ping_results
+                WHERE host_path IN ({placeholders}) AND timestamp >= ?
+            ),
+            changes AS (
+                SELECT host_path, timestamp, is_up
+                FROM ordered
+                WHERE prev_is_up IS NULL OR is_up != prev_is_up
+            ),
+            with_next AS (
+                SELECT host_path, timestamp AS t_start, is_up,
+                       LEAD(timestamp) OVER (PARTITION BY host_path ORDER BY timestamp) AS t_end
+                FROM changes
+            )
+            SELECT host_path, t_start, t_end
+            FROM with_next
+            WHERE is_up = 0
+              AND t_start < ?
+              AND (t_end IS NULL OR t_end > ?)
+            ORDER BY t_start
+        """, host_paths + [extended_since, until, since]).fetchall()
+
+    result = []
+    for row in rows:
+        end = row['t_end']
+        result.append({
+            'host_path':        row['host_path'],
+            'start':            row['t_start'],
+            'end':              end,
+            'duration_seconds': (end - row['t_start']) if end else (until - row['t_start']),
+            'ongoing':          end is None or end >= until,
+        })
+    return result
+
+
 def cleanup_old_records():
     """Delete records older than 2 years."""
     cutoff = int(time.time()) - RETENTION_DAYS * 24 * 3600
