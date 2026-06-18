@@ -4,6 +4,7 @@ Uptime Monitor — Flask web application.
 import os
 import secrets
 import time
+from datetime import timedelta
 from functools import wraps
 from pathlib import Path
 
@@ -28,10 +29,65 @@ def load_config():
 config = load_config()
 
 # ---------------------------------------------------------------------------
+# Rate limiting — in-memory, per IP
+# ---------------------------------------------------------------------------
+
+_LOCKOUT_ATTEMPTS = 5
+_LOCKOUT_SECONDS  = 86400  # 24 hours
+
+# {ip: {'count': int, 'locked_until': float}}
+_login_attempts: dict = {}
+
+
+def _client_ip() -> str:
+    return request.headers.get('X-Forwarded-For', request.remote_addr or '').split(',')[0].strip()
+
+
+def _is_locked(ip: str) -> bool:
+    entry = _login_attempts.get(ip)
+    if not entry:
+        return False
+    if entry.get('locked_until', 0) > time.time():
+        return True
+    # Lockout expired — clear it
+    _login_attempts.pop(ip, None)
+    return False
+
+
+def _record_failure(ip: str):
+    entry = _login_attempts.setdefault(ip, {'count': 0, 'locked_until': 0})
+    entry['count'] += 1
+    if entry['count'] >= _LOCKOUT_ATTEMPTS:
+        entry['locked_until'] = time.time() + _LOCKOUT_SECONDS
+
+
+def _clear_failures(ip: str):
+    _login_attempts.pop(ip, None)
+
+
+# ---------------------------------------------------------------------------
 # Flask app setup
 # ---------------------------------------------------------------------------
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
+
+
+@app.after_request
+def add_security_headers(response):
+    response.headers['X-Frame-Options']           = 'DENY'
+    response.headers['X-Content-Type-Options']    = 'nosniff'
+    response.headers['X-XSS-Protection']          = '1; mode=block'
+    response.headers['Referrer-Policy']           = 'strict-origin-when-cross-origin'
+    response.headers['Content-Security-Policy']   = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'"
+    )
+    return response
+
 
 # Secret key — persisted in DB so sessions survive container restarts
 def get_secret_key():
@@ -54,6 +110,20 @@ def login_required(f):
             if request.path.startswith('/api/'):
                 return jsonify({'error': 'Unauthorized'}), 401
             return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def csrf_required(f):
+    """Validate CSRF token on state-changing POST requests."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = (
+            request.headers.get('X-CSRF-Token')
+            or request.form.get('csrf_token')
+        )
+        if not token or token != session.get('csrf_token'):
+            return jsonify({'error': 'Invalid CSRF token'}), 403
         return f(*args, **kwargs)
     return decorated
 
@@ -144,11 +214,27 @@ LOGIN_HTML = """<!DOCTYPE html>
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    ip = _client_ip()
     if request.method == 'POST':
+        if _is_locked(ip):
+            return render_template_string(LOGIN_HTML,
+                error='Too many failed attempts. Try again in 24 hours.')
         if request.form.get('password') == config['password']:
+            _clear_failures(ip)
+            session.permanent = True
             session['authenticated'] = True
+            session['csrf_token'] = secrets.token_hex(32)
             return redirect(url_for('index'))
-        return render_template_string(LOGIN_HTML, error='Incorrect password')
+        _record_failure(ip)
+        remaining = _LOCKOUT_ATTEMPTS - _login_attempts.get(ip, {}).get('count', 0)
+        if remaining <= 0:
+            return render_template_string(LOGIN_HTML,
+                error='Too many failed attempts. Account locked for 24 hours.')
+        return render_template_string(LOGIN_HTML,
+            error=f'Incorrect password. {remaining} attempt(s) remaining.')
+    if _is_locked(ip):
+        return render_template_string(LOGIN_HTML,
+            error='Too many failed attempts. Try again in 24 hours.')
     return render_template_string(LOGIN_HTML, error=None)
 
 
@@ -252,8 +338,17 @@ def api_node():
     })
 
 
+@app.route('/api/csrf-token')
+@login_required
+def api_csrf_token():
+    if 'csrf_token' not in session:
+        session['csrf_token'] = secrets.token_hex(32)
+    return jsonify({'csrf_token': session['csrf_token']})
+
+
 @app.route('/api/reload', methods=['POST'])
 @login_required
+@csrf_required
 def api_reload():
     try:
         tree_mgr.load_tree()
@@ -356,6 +451,50 @@ def api_host_events():
     return jsonify({'events': events})
 
 
+@app.route('/api/outages')
+@login_required
+def api_outages():
+    days  = min(int(request.args.get('days', 30)), 90)
+    now   = int(time.time())
+    since = now - days * 86400
+
+    paused_set = database.get_all_paused()
+    top_pages  = tree_mgr.get_children('') or []
+
+    # Build path → {name, host, site} lookup
+    path_info: dict = {}
+    for page in top_pages:
+        leaves = tree_mgr.get_leaves_under(page['path']) or []
+        for leaf in leaves:
+            path_info[leaf['path']] = {
+                'name': leaf['name'],
+                'host': leaf['host'],
+                'site': page['name'],
+            }
+
+    # Query outages for all active (non-paused) hosts
+    active_paths = [p for p in path_info if p not in paused_set]
+    raw = database.get_outages_in_period(active_paths, since, now)
+
+    outages = []
+    for o in raw:
+        info = path_info.get(o['host_path'], {})
+        outages.append({
+            'host_path':        o['host_path'],
+            'name':             info.get('name', o['host_path']),
+            'host':             info.get('host', '—'),
+            'site':             info.get('site', '—'),
+            'start':            o['start'],
+            'end':              o['end'],
+            'duration_seconds': o['duration_seconds'],
+            'ongoing':          o['ongoing'],
+        })
+
+    # Most recent outages first
+    outages.sort(key=lambda x: x['start'], reverse=True)
+    return jsonify({'outages': outages, 'days': days, 'since': since, 'now': now})
+
+
 @app.route('/api/hosts/list')
 @login_required
 def api_hosts_list():
@@ -401,6 +540,7 @@ def api_hosts_list():
 
 @app.route('/api/host/pause', methods=['POST'])
 @login_required
+@csrf_required
 def api_host_pause():
     path = request.args.get('path', '').strip('/')
     node = tree_mgr.find_node(path)
@@ -412,6 +552,7 @@ def api_host_pause():
 
 @app.route('/api/host/resume', methods=['POST'])
 @login_required
+@csrf_required
 def api_host_resume():
     path = request.args.get('path', '').strip('/')
     node = tree_mgr.find_node(path)

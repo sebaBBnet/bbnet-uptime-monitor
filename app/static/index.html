@@ -408,6 +408,60 @@ canvas#latencyCanvas {
 @media (max-width: 400px) {
   .tile-grid { grid-template-columns: 1fr; }
 }
+
+/* ---- Visual distinction: host vs group tiles ---- */
+.tile.is-group { background: var(--surface); }
+.tile.is-host  { background: #1c2235; border-color: #35405a; }
+.tile-type-icon { font-size: 0.7rem; color: var(--muted); margin-left: 0.25rem; vertical-align: middle; }
+
+/* ---- List view ---- */
+#listViewWrap { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.list-item {
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.65rem 1rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background .15s;
+}
+.list-item:last-child { border-bottom: none; }
+.list-item:hover { background: var(--surface2); }
+.list-item.is-host  { border-left: 3px solid #35405a; }
+.list-item.is-group { border-left: 3px solid #2d3748; }
+.li-name { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.li-sub  { font-size: .72rem; color: var(--muted); font-family: 'Consolas', monospace; margin-left: .3rem; }
+.li-counts { display: flex; gap: .5rem; font-size: .8rem; white-space: nowrap; }
+.li-uptime { display: flex; gap: .35rem; font-size: .72rem; white-space: nowrap; }
+.li-ubadge { background: var(--surface2); border: 1px solid var(--border); border-radius: 3px; padding: .1rem .35rem; }
+.li-arrow  { color: var(--muted); font-size: 1rem; }
+
+/* ---- Toggle button active state ---- */
+.btn.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+
+/* ---- Outages view ---- */
+#outagesView { display: none; }
+.outages-controls { display: flex; gap: .5rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; }
+.outages-controls select {
+  padding: .3rem .6rem; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface2);
+  color: var(--text); font-size: .82rem; cursor: pointer;
+}
+.outages-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.outages-table th {
+  padding: .5rem .75rem; text-align: left; font-weight: 600;
+  font-size: .7rem; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted); border-bottom: 1px solid var(--border);
+  background: var(--surface2);
+}
+.outages-table td { padding: .55rem .75rem; border-bottom: 1px solid rgba(45,55,72,.4); cursor: pointer; }
+.outages-table tr:last-child td { border-bottom: none; }
+.outages-table tr:hover td { background: var(--surface2); }
+.outage-site { font-size: .75rem; color: var(--muted); }
+.outage-ongoing { color: var(--red); font-style: italic; }
+.outages-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; overflow: hidden;
+}
 </style>
 </head>
 <body>
@@ -435,6 +489,8 @@ canvas#latencyCanvas {
   <div class="header-actions">
     <span class="refresh-ts" id="refreshTs"></span>
     <button class="btn" onclick="navigate('')">🏠 Home</button>
+    <button class="btn" id="outagesBtn" onclick="showOutages()">📋 Outages</button>
+    <button class="btn" id="layoutBtn" onclick="toggleLayout()" title="Switch between tile and list view">⊞ Tiles</button>
     <button class="btn" onclick="reloadHosts()">⟳ Reload hosts</button>
     <button class="btn" onclick="handleRefresh()">↺ Refresh</button>
     <a href="/logout" class="btn">Sign out</a>
@@ -527,13 +583,32 @@ canvas#latencyCanvas {
   </div>
 </div>
 
+<!-- ====== OUTAGES VIEW ====== -->
+<main class="main" id="outagesView">
+  <div class="outages-controls">
+    <strong style="font-size:.9rem">Recent Outages</strong>
+    <select id="outagesDays" onchange="fetchOutages()">
+      <option value="7">Last 7 days</option>
+      <option value="14">Last 14 days</option>
+      <option value="30" selected>Last 30 days</option>
+    </select>
+    <select id="outagesSite" onchange="renderOutagesTable()">
+      <option value="">All sites</option>
+    </select>
+    <span id="outagesCount" style="font-size:.8rem;color:var(--muted)"></span>
+  </div>
+  <div class="outages-card">
+    <div id="outagesBody"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+  </div>
+</main>
+
 <div class="toast" id="toast"></div>
 
 <script>
 // ============================================================
 // State
 // ============================================================
-let viewMode      = 'tiles';   // 'tiles' | 'host'
+let viewMode      = 'tiles';   // 'tiles' | 'host' | 'outages'
 let currentPath   = '';        // group path for tile view
 let currentHost   = '';        // leaf path for host view
 let graphHours    = 1;
@@ -541,7 +616,12 @@ let graphData     = null;
 let autoTimer     = null;
 let currentHostPaused = false;
 let pausedSet     = new Set(); // all paused paths (for tile view)
+let outagesData   = [];        // cached outage list
+let csrfToken     = '';        // CSRF token from server
 const AUTO_MS     = 30000;
+
+// Layout: 'tiles' or 'list', persisted in localStorage
+let tileLayout = localStorage.getItem('tileLayout') || 'tiles';
 
 // ============================================================
 // Routing via URL hash
@@ -564,19 +644,17 @@ window.addEventListener('hashchange', routeFromHash);
 
 function routeFromHash() {
   const hash = window.location.hash.replace('#', '');
-  if (hash.startsWith('host:')) {
+  if (hash === 'outages') {
+    if (viewMode !== 'outages') showOutages();
+  } else if (hash.startsWith('host:')) {
     const p = hash.slice(5);
     if (p !== currentHost || viewMode !== 'host') {
-      currentHost = p;
-      viewMode = 'host';
-      fetchHostDetail();
+      currentHost = p; viewMode = 'host'; fetchHostDetail();
     }
   } else {
     const p = hash;
     if (p !== currentPath || viewMode !== 'tiles') {
-      currentPath = p;
-      viewMode = 'tiles';
-      fetchTiles();
+      currentPath = p; viewMode = 'tiles'; fetchTiles();
     }
   }
 }
@@ -637,24 +715,39 @@ function renderSummary(s) {
 }
 
 function renderTiles(items) {
+  window._lastItems = items;
+  renderTilesOrList(items);
+}
+
+function renderTilesOrList(items) {
   const el = document.getElementById('tileContent');
   if (!items || !items.length) {
-    el.innerHTML = '<div class="empty-state"><h2>No hosts here</h2><p>Add entries to hosts.yml and reload.</p></div>';
+    el.innerHTML = '<div class="empty-state"><h2>No hosts here</h2><p>Add entries to hosts.cfg and reload.</p></div>';
     return;
   }
-  el.innerHTML = '<div class="tile-grid">' + items.map(tileParts).join('') + '</div>';
+  if (tileLayout === 'list') {
+    el.innerHTML = '<div id="listViewWrap">' + items.map(listParts).join('') + '</div>';
+  } else {
+    el.innerHTML = '<div class="tile-grid">' + items.map(tileParts).join('') + '</div>';
+  }
 }
 
 function tileParts(item) {
   const isPaused = item.is_leaf && pausedSet.has(item.path);
-  const sc = isPaused ? 'tile paused' : tileStatus(item);
-  const dc = isPaused ? 'warn' : dotClass(item);
-  const leaf = item.is_leaf;
+  const sc    = isPaused ? 'tile paused' : tileStatus(item);
+  const dc    = isPaused ? 'warn' : dotClass(item);
+  const leaf  = item.is_leaf;
   const click = leaf
     ? `onclick="navigateHost('${esc(item.path)}')"`
     : `onclick="navigate('${esc(item.path)}')"`;
 
-  const hostLine = leaf ? `<div class="tile-host">${esc(item.host)}${isPaused ? ' <span style="color:var(--yellow);font-size:.7rem">⏸ paused</span>' : ''}</div>` : '';
+  // Visual distinction: hosts get is-host class, groups get is-group + folder icon
+  const typeClass = leaf ? 'is-host' : 'is-group';
+  const typeIcon  = leaf ? '' : '<span class="tile-type-icon">📁</span>';
+
+  const hostLine = leaf
+    ? `<div class="tile-host">${esc(item.host)}${isPaused ? ' <span style="color:var(--yellow);font-size:.7rem">⏸ paused</span>' : ''}</div>`
+    : '';
 
   let counts = '';
   const hasActive = item.host_count > 0;
@@ -682,14 +775,59 @@ function tileParts(item) {
   </div>`;
 
   const arrow = !leaf ? '<span class="tile-arrow">›</span>' : '';
+  const tileClass = isPaused ? `tile tile-paused ${typeClass}` : `tile ${sc} ${typeClass}`;
 
-  const tileClass = isPaused ? 'tile tile-paused' : `tile ${sc}`;
   return `<div class="${tileClass}" ${click}>
     <div class="tile-hdr">
       <span class="sdot ${dc}"></span>
-      <div><div class="tile-name">${esc(item.name)}</div>${hostLine}</div>
+      <div><div class="tile-name">${esc(item.name)}${typeIcon}</div>${hostLine}</div>
     </div>
     ${counts}${latLine}${badges}${arrow}
+  </div>`;
+}
+
+function listParts(item) {
+  const isPaused = item.is_leaf && pausedSet.has(item.path);
+  const dc    = isPaused ? 'warn' : dotClass(item);
+  const leaf  = item.is_leaf;
+  const click = leaf
+    ? `onclick="navigateHost('${esc(item.path)}')"`
+    : `onclick="navigate('${esc(item.path)}')"`;
+  const typeClass = leaf ? 'is-host' : 'is-group';
+  const typeIcon  = leaf ? '' : '📁 ';
+
+  const u24  = fp(item.uptime_24h);
+  const u7d  = fp(item.uptime_7d);
+  const u30d = fp(item.uptime_30d);
+
+  let counts = '';
+  if (!leaf) {
+    const total = (item.host_count||0) + (item.paused_count||0);
+    counts = `<span class="li-counts">
+      <span class="cu">▲${item.up_count}</span>
+      <span class="cd">▼${item.down_count}</span>
+      ${(item.paused_count||0) > 0 ? `<span style="color:var(--yellow)">⏸${item.paused_count}</span>` : ''}
+      <span style="color:var(--muted)">${total}h</span>
+    </span>`;
+  } else {
+    const lat = item.latency_ms != null ? `${item.latency_ms.toFixed(1)}ms` : '';
+    counts = `<span class="li-counts" style="color:${isPaused?'var(--yellow)':item.is_up?'var(--green)':'var(--red)'}">
+      ${isPaused ? '⏸ Paused' : item.is_up ? '● Up' : '● Down'}
+      ${lat ? `<span style="color:var(--muted)">${lat}</span>` : ''}
+    </span>`;
+  }
+
+  return `<div class="list-item ${typeClass}" ${click}>
+    <span class="sdot ${dc}" style="flex-shrink:0"></span>
+    <span class="li-name">${typeIcon}${esc(item.name)}</span>
+    ${leaf ? `<span class="li-sub">${esc(item.host||'')}</span>` : ''}
+    ${counts}
+    <span class="li-uptime">
+      <span class="li-ubadge"><span style="color:var(--muted);font-size:.65rem">24h</span> <span class="uv ${u24.c}">${u24.t}</span></span>
+      <span class="li-ubadge"><span style="color:var(--muted);font-size:.65rem">7d</span> <span class="uv ${u7d.c}">${u7d.t}</span></span>
+      <span class="li-ubadge"><span style="color:var(--muted);font-size:.65rem">30d</span> <span class="uv ${u30d.c}">${u30d.t}</span></span>
+    </span>
+    <span class="li-arrow">›</span>
   </div>`;
 }
 
@@ -795,7 +933,9 @@ function setPauseBtn(paused) {
 async function togglePause() {
   const action = currentHostPaused ? 'resume' : 'pause';
   try {
-    const r = await fetch(`/api/host/${action}?path=${encodeURIComponent(currentHost)}`, { method: 'POST' });
+    const r = await fetch(`/api/host/${action}?path=${encodeURIComponent(currentHost)}`, {
+      method: 'POST', headers: { 'X-CSRF-Token': csrfToken }
+    });
     if (!r.ok) return;
     setPauseBtn(!currentHostPaused);
     if (!currentHostPaused) {
@@ -1185,8 +1325,24 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal()
 // View switching
 // ============================================================
 function showView(mode) {
-  document.getElementById('tileView').style.display = mode === 'tiles' ? 'block' : 'none';
-  document.getElementById('hostView').style.display = mode === 'host'  ? 'block' : 'none';
+  document.getElementById('tileView').style.display    = mode === 'tiles'   ? 'block' : 'none';
+  document.getElementById('hostView').style.display    = mode === 'host'    ? 'block' : 'none';
+  document.getElementById('outagesView').style.display = mode === 'outages' ? 'block' : 'none';
+  // Highlight outages button when active
+  document.getElementById('outagesBtn').classList.toggle('active', mode === 'outages');
+}
+
+function toggleLayout() {
+  tileLayout = tileLayout === 'tiles' ? 'list' : 'tiles';
+  localStorage.setItem('tileLayout', tileLayout);
+  const btn = document.getElementById('layoutBtn');
+  btn.textContent = tileLayout === 'tiles' ? '⊞ Tiles' : '☰ List';
+  if (viewMode === 'tiles') renderTilesOrList(window._lastItems || []);
+}
+
+function updateLayoutBtn() {
+  const btn = document.getElementById('layoutBtn');
+  if (btn) btn.textContent = tileLayout === 'tiles' ? '⊞ Tiles' : '☰ List';
 }
 
 // ============================================================
@@ -1216,11 +1372,87 @@ function scheduleAuto() {
 
 async function reloadHosts() {
   try {
-    const r = await fetch('/api/reload', { method: 'POST' });
+    const r = await fetch('/api/reload', { method: 'POST', headers: { 'X-CSRF-Token': csrfToken } });
     const d = await r.json();
     toast(d.message, r.ok ? 'ok' : 'err');
     if (r.ok) handleRefresh();
   } catch (e) { toast('Reload failed', 'err'); }
+}
+
+// ============================================================
+// Outages view
+// ============================================================
+function showOutages() {
+  viewMode = 'outages';
+  window.location.hash = '#outages';
+  showView('outages');
+  clearTimeout(autoTimer);
+  fetchOutages();
+}
+
+async function fetchOutages() {
+  const days = document.getElementById('outagesDays').value;
+  document.getElementById('outagesBody').innerHTML =
+    '<div class="loading"><div class="spinner"></div> Loading…</div>';
+  try {
+    const r = await fetch('/api/outages?days=' + days);
+    if (r.status === 401) { location.href = '/login'; return; }
+    const d = await r.json();
+    outagesData = d.outages || [];
+
+    // Populate site filter
+    const sites = [...new Set(outagesData.map(o => o.site))].sort();
+    const sel = document.getElementById('outagesSite');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">All sites</option>' +
+      sites.map(s => `<option value="${esc(s)}" ${s===cur?'selected':''}>${esc(s)}</option>`).join('');
+
+    renderOutagesTable();
+  } catch (e) {
+    document.getElementById('outagesBody').innerHTML =
+      `<div class="modal-empty">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderOutagesTable() {
+  const site   = document.getElementById('outagesSite').value;
+  const filtered = site ? outagesData.filter(o => o.site === site) : outagesData;
+  const countEl = document.getElementById('outagesCount');
+  countEl.textContent = filtered.length + ' outage' + (filtered.length !== 1 ? 's' : '');
+
+  if (!filtered.length) {
+    document.getElementById('outagesBody').innerHTML =
+      '<div class="modal-empty" style="padding:2rem;text-align:center;color:var(--muted)">✅ No outages in this period</div>';
+    return;
+  }
+
+  const rows = filtered.map(o => {
+    const start    = fmtDateTime(o.start);
+    const end      = o.ongoing
+      ? `<span class="outage-ongoing">Ongoing (${fmtDuration(o.duration_seconds)})</span>`
+      : fmtDateTime(o.end);
+    const dur      = o.ongoing ? '—' : fmtDuration(o.duration_seconds);
+    return `<tr onclick="closeOutagesAndGo('${esc(o.host_path)}')">
+      <td><strong>${esc(o.name)}</strong><br><span class="outage-site">${esc(o.site)}</span></td>
+      <td style="font-family:monospace;font-size:.78rem">${esc(o.host)}</td>
+      <td>${start}</td>
+      <td>${end}</td>
+      <td>${dur}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('outagesBody').innerHTML = `
+    <table class="outages-table">
+      <thead><tr>
+        <th>Host / Site</th><th>IP Address</th>
+        <th>Started</th><th>Ended</th><th>Duration</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function closeOutagesAndGo(path) {
+  navigateHost(path);
 }
 
 // ============================================================
@@ -1291,8 +1523,17 @@ window.addEventListener('resize', () => {
 // ============================================================
 // Init
 // ============================================================
+updateLayoutBtn();
+
+// Fetch CSRF token once on load
+fetch('/api/csrf-token').then(r => r.ok ? r.json() : {}).then(d => { csrfToken = d.csrf_token || ''; });
+
 const initHash = window.location.hash.replace('#', '');
-if (initHash.startsWith('host:')) {
+if (initHash === 'outages') {
+  viewMode = 'outages';
+  showView('outages');
+  fetchOutages();
+} else if (initHash.startsWith('host:')) {
   currentHost = initHash.slice(5);
   viewMode = 'host';
   showView('host');
