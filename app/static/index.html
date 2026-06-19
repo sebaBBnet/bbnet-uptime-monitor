@@ -701,10 +701,35 @@ async function fetchTiles() {
     renderSummary(sum);
     renderTiles(node.items);
     stamp();
+
+    // Fetch uptime separately — tiles are already visible, badges fill in after
+    fetchTileUptime(currentPath, node.items);
   } catch (e) {
     document.getElementById('tileContent').innerHTML =
       '<div class="empty-state"><h2>Failed to load</h2><p>' + esc(e.message) + '</p></div>';
   }
+}
+
+async function fetchTileUptime(path, items) {
+  if (!items || !items.length) return;
+  try {
+    const r = await fetch('/api/node/uptime?path=' + encodeURIComponent(path));
+    if (!r.ok) return;
+    const d = await r.json();
+    // Patch uptime into each item and re-render just the uptime badges
+    for (const item of items) {
+      const u = d.uptime && d.uptime[item.path];
+      if (!u) continue;
+      item.uptime_24h = u.uptime_24h;
+      item.uptime_7d  = u.uptime_7d;
+      item.uptime_30d = u.uptime_30d;
+      // Update the badges in-place without re-rendering the whole tile
+      const el = document.querySelector(`[data-path="${CSS.escape(item.path)}"] .uptime-row`);
+      if (!el) continue;
+      const inList = el.classList.contains('li-uptime');
+      el.outerHTML = inList ? listUptimeBadges(item) : uptimeBadges(item);
+    }
+  } catch (_) {}
 }
 
 function renderSummary(s) {
@@ -765,25 +790,54 @@ function tileParts(item) {
   if (leaf && item.latency_ms != null)
     latLine = `<div class="latency-sm">Latency: ${item.latency_ms.toFixed(1)} ms</div>`;
 
-  const u24  = fp(item.uptime_24h);
-  const u7d  = fp(item.uptime_7d);
-  const u30d = fp(item.uptime_30d);
-  const badges = `<div class="uptime-row">
-    <div class="ubadge"><span class="ul">24h</span><span class="uv ${u24.c}">${u24.t}</span></div>
-    <div class="ubadge"><span class="ul">7d</span><span class="uv ${u7d.c}">${u7d.t}</span></div>
-    <div class="ubadge"><span class="ul">30d</span><span class="uv ${u30d.c}">${u30d.t}</span></div>
-  </div>`;
-
   const arrow = !leaf ? '<span class="tile-arrow">›</span>' : '';
   const tileClass = isPaused ? `tile tile-paused ${typeClass}` : `tile ${sc} ${typeClass}`;
 
-  return `<div class="${tileClass}" ${click}>
+  return `<div class="${tileClass}" ${click} data-path="${esc(item.path)}">
     <div class="tile-hdr">
       <span class="sdot ${dc}"></span>
       <div><div class="tile-name">${esc(item.name)}${typeIcon}</div>${hostLine}</div>
     </div>
-    ${counts}${latLine}${badges}${arrow}
+    ${counts}${latLine}${uptimeBadges(item)}${arrow}
   </div>`;
+}
+
+function uptimeBadges(item) {
+  const u24  = fp(item.uptime_24h);
+  const u7d  = fp(item.uptime_7d);
+  const u30d = fp(item.uptime_30d);
+  const loading = item.uptime_24h == null && item.uptime_7d == null && item.uptime_30d == null;
+  if (loading) {
+    return `<div class="uptime-row">
+      <div class="ubadge"><span class="ul">24h</span><span class="uv n" style="font-size:.65rem">…</span></div>
+      <div class="ubadge"><span class="ul">7d</span><span class="uv n" style="font-size:.65rem">…</span></div>
+      <div class="ubadge"><span class="ul">30d</span><span class="uv n" style="font-size:.65rem">…</span></div>
+    </div>`;
+  }
+  return `<div class="uptime-row">
+    <div class="ubadge"><span class="ul">24h</span><span class="uv ${u24.c}">${u24.t}</span></div>
+    <div class="ubadge"><span class="ul">7d</span><span class="uv ${u7d.c}">${u7d.t}</span></div>
+    <div class="ubadge"><span class="ul">30d</span><span class="uv ${u30d.c}">${u30d.t}</span></div>
+  </div>`;
+}
+
+function listUptimeBadges(item) {
+  const loading = item.uptime_24h == null && item.uptime_7d == null && item.uptime_30d == null;
+  const u24 = fp(item.uptime_24h);
+  const u7d = fp(item.uptime_7d);
+  const u30d = fp(item.uptime_30d);
+  if (loading) {
+    return `<span class="li-uptime uptime-row">
+      <span class="li-ubadge"><span style="color:var(--muted);font-size:.65rem">24h</span> <span class="uv n" style="font-size:.65rem">…</span></span>
+      <span class="li-ubadge"><span style="color:var(--muted);font-size:.65rem">7d</span> <span class="uv n" style="font-size:.65rem">…</span></span>
+      <span class="li-ubadge"><span style="color:var(--muted);font-size:.65rem">30d</span> <span class="uv n" style="font-size:.65rem">…</span></span>
+    </span>`;
+  }
+  return `<span class="li-uptime uptime-row">
+    <span class="li-ubadge"><span style="color:var(--muted);font-size:.65rem">24h</span> <span class="uv ${u24.c}">${u24.t}</span></span>
+    <span class="li-ubadge"><span style="color:var(--muted);font-size:.65rem">7d</span> <span class="uv ${u7d.c}">${u7d.t}</span></span>
+    <span class="li-ubadge"><span style="color:var(--muted);font-size:.65rem">30d</span> <span class="uv ${u30d.c}">${u30d.t}</span></span>
+  </span>`;
 }
 
 function listParts(item) {
@@ -795,10 +849,6 @@ function listParts(item) {
     : `onclick="navigate('${esc(item.path)}')"`;
   const typeClass = leaf ? 'is-host' : 'is-group';
   const typeIcon  = leaf ? '' : '📁 ';
-
-  const u24  = fp(item.uptime_24h);
-  const u7d  = fp(item.uptime_7d);
-  const u30d = fp(item.uptime_30d);
 
   let counts = '';
   if (!leaf) {
@@ -817,16 +867,12 @@ function listParts(item) {
     </span>`;
   }
 
-  return `<div class="list-item ${typeClass}" ${click}>
+  return `<div class="list-item ${typeClass}" ${click} data-path="${esc(item.path)}">
     <span class="sdot ${dc}" style="flex-shrink:0"></span>
     <span class="li-name">${typeIcon}${esc(item.name)}</span>
     ${leaf ? `<span class="li-sub">${esc(item.host||'')}</span>` : ''}
     ${counts}
-    <span class="li-uptime">
-      <span class="li-ubadge"><span style="color:var(--muted);font-size:.65rem">24h</span> <span class="uv ${u24.c}">${u24.t}</span></span>
-      <span class="li-ubadge"><span style="color:var(--muted);font-size:.65rem">7d</span> <span class="uv ${u7d.c}">${u7d.t}</span></span>
-      <span class="li-ubadge"><span style="color:var(--muted);font-size:.65rem">30d</span> <span class="uv ${u30d.c}">${u30d.t}</span></span>
-    </span>
+    ${listUptimeBadges(item)}
     <span class="li-arrow">›</span>
   </div>`;
 }
