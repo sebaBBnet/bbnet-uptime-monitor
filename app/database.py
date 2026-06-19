@@ -2,11 +2,38 @@
 SQLite database operations for uptime monitoring.
 """
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
 DB_PATH = Path('/data/uptime.db')
 RETENTION_DAYS = 730  # 2 years
+
+# ---------------------------------------------------------------------------
+# Simple TTL cache for uptime queries
+# ---------------------------------------------------------------------------
+_CACHE_TTL   = 60          # seconds — uptime %s cached for 60s
+_uptime_cache: dict = {}   # key -> (value, expires_at)
+_cache_lock  = threading.Lock()
+
+
+def _cache_get(key):
+    with _cache_lock:
+        entry = _uptime_cache.get(key)
+        if entry and entry[1] > time.time():
+            return entry[0], True
+        return None, False
+
+
+def _cache_set(key, value):
+    with _cache_lock:
+        _uptime_cache[key] = (value, time.time() + _CACHE_TTL)
+
+
+def invalidate_uptime_cache():
+    """Call after storing new ping results to clear stale uptime entries."""
+    with _cache_lock:
+        _uptime_cache.clear()
 
 
 def get_conn():
@@ -86,6 +113,10 @@ def get_latest_results_batch(host_paths: list) -> dict:
 
 
 def get_uptime(host_path: str, hours: int):
+    cache_key = f"u1:{host_path}:{hours}"
+    val, hit = _cache_get(cache_key)
+    if hit:
+        return val
     since = int(time.time()) - hours * 3600
     with get_conn() as conn:
         row = conn.execute("""
@@ -93,14 +124,18 @@ def get_uptime(host_path: str, hours: int):
             FROM ping_results
             WHERE host_path = ? AND timestamp >= ?
         """, (host_path, since)).fetchone()
-    if not row or row['total'] == 0:
-        return None
-    return round((row['up_count'] / row['total']) * 100, 2)
+    result = None if (not row or row['total'] == 0) else round((row['up_count'] / row['total']) * 100, 2)
+    _cache_set(cache_key, result)
+    return result
 
 
 def get_uptime_multi(host_paths: list, hours: int):
     if not host_paths:
         return None
+    cache_key = f"um:{':'.join(sorted(host_paths))}:{hours}"
+    val, hit = _cache_get(cache_key)
+    if hit:
+        return val
     since = int(time.time()) - hours * 3600
     placeholders = ','.join('?' * len(host_paths))
     with get_conn() as conn:
@@ -109,9 +144,9 @@ def get_uptime_multi(host_paths: list, hours: int):
             FROM ping_results
             WHERE host_path IN ({placeholders}) AND timestamp >= ?
         """, host_paths + [since]).fetchone()
-    if not row or row['total'] == 0:
-        return None
-    return round((row['up_count'] / row['total']) * 100, 2)
+    result = None if (not row or row['total'] == 0) else round((row['up_count'] / row['total']) * 100, 2)
+    _cache_set(cache_key, result)
+    return result
 
 
 def get_latency_stats(host_path: str, hours: int) -> dict:
