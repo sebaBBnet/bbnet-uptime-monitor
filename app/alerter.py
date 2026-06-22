@@ -24,6 +24,10 @@ _lock = threading.Lock()
 # Tracks hosts currently in alerted-down state to avoid repeat down alerts
 _alerted_down: set = set()
 
+# Rate limit: max 10 alert emails per minute
+_alert_timestamps: list = []
+_MAX_ALERTS_PER_MINUTE = 10
+
 
 # ---------------------------------------------------------------------------
 # Init
@@ -45,9 +49,21 @@ def init(config: dict):
 # Core email sender
 # ---------------------------------------------------------------------------
 
-def _send_email(subject: str, body_html: str, body_text: str):
+def _send_email(subject: str, body_html: str, body_text: str, bypass_rate_limit: bool = False):
     """Send an email via SMTP TLS. Returns True on success."""
     cfg = _config
+
+    # Rate-limit real-time alerts: max 10 per minute (reports bypass this)
+    if not bypass_rate_limit:
+        now = time.time()
+        with _lock:
+            # Drop timestamps older than 60s
+            _alert_timestamps[:] = [t for t in _alert_timestamps if now - t < 60]
+            if len(_alert_timestamps) >= _MAX_ALERTS_PER_MINUTE:
+                print(f"[alerter] Rate-limited ({len(_alert_timestamps)}/min) — skipping: {subject}")
+                return False
+            _alert_timestamps.append(now)
+
     try:
         msg = MIMEMultipart('alternative')
         msg['Subject'] = subject
@@ -57,9 +73,10 @@ def _send_email(subject: str, body_html: str, body_text: str):
         msg.attach(MIMEText(body_text, 'plain'))
         msg.attach(MIMEText(body_html, 'html'))
 
-        with smtplib.SMTP(cfg['smtp_host'], cfg['smtp_port'], timeout=10) as smtp:
+        with smtplib.SMTP(cfg['smtp_host'], cfg['smtp_port'], timeout=30) as smtp:
             smtp.ehlo()
             smtp.starttls()
+            smtp.ehlo()
             smtp.login(cfg['smtp_user'], cfg['smtp_password'])
             smtp.sendmail(msg['From'], cfg.get('to_addresses', []), msg.as_string())
 
@@ -464,7 +481,7 @@ def send_daily_report():
         )
         + (f"\n\n{len(data['all_paused'])} paused host(s)" if data['all_paused'] else '')
     )
-    _send_email(subject, body_html, body_text)
+    _send_email(subject, body_html, body_text, bypass_rate_limit=True)
 
 
 def send_weekly_report():
