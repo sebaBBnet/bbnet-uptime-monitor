@@ -28,6 +28,10 @@ _alerted_down: set = set()
 _alert_timestamps: list = []
 _MAX_ALERTS_PER_MINUTE = 10
 
+# Startup grace period — suppress down alerts for this many seconds after init
+_STARTUP_GRACE = 300   # 5 minutes
+_start_time: float = time.time()
+
 
 # ---------------------------------------------------------------------------
 # Init
@@ -141,6 +145,8 @@ def notify_down(host_path: str, host_name: str, host_ip: str):
     """Called by pinger when a host is confirmed down."""
     if not _config.get('enabled'):
         return
+    if time.time() - _start_time < _STARTUP_GRACE:
+        return  # Suppress alerts during startup grace period
     with _lock:
         if host_path in _alerted_down:
             return
