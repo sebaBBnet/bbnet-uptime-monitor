@@ -5,6 +5,8 @@ Gunicorn imports this module and serves `app`. We run the same startup
 sequence as main.py __main__ block so the pinger and alerter threads
 start exactly once before the first request arrives.
 """
+import threading
+import time
 from pathlib import Path
 import yaml
 
@@ -39,5 +41,18 @@ scheduler = pinger_module.PingScheduler(
     ping_timeout=config.get('ping_timeout', 1),
 )
 scheduler.start()
+
+def _cleanup_loop():
+    """Delete records older than 2 years once per day."""
+    while True:
+        time.sleep(86400)
+        try:
+            database.cleanup_old_records()
+            print("[wsgi] Ran cleanup_old_records")
+        except Exception as e:
+            print(f"[wsgi] cleanup error: {e}")
+
+_t = threading.Thread(target=_cleanup_loop, daemon=True, name="cleanup")
+_t.start()
 
 print(f"[wsgi] App ready — Gunicorn serving on port {config.get('port', 9000)}")

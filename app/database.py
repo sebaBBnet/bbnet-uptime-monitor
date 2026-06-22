@@ -1,6 +1,7 @@
 """
 SQLite database operations for uptime monitoring.
 """
+import hashlib
 import sqlite3
 import threading
 import time
@@ -10,30 +11,31 @@ DB_PATH = Path('/data/uptime.db')
 RETENTION_DAYS = 730  # 2 years
 
 # ---------------------------------------------------------------------------
-# Simple TTL cache for uptime queries
+# TTL cache for expensive queries
 # ---------------------------------------------------------------------------
-_CACHE_TTL   = 60          # seconds — uptime %s cached for 60s
-_uptime_cache: dict = {}   # key -> (value, expires_at)
-_cache_lock  = threading.Lock()
+_UPTIME_TTL  = 60    # uptime %s — 60s is fine (rolling averages over hours/days)
+_LATEST_TTL  = 5     # latest ping results — 5s prevents hammering on rapid refreshes
+
+_cache: dict      = {}   # key -> (value, expires_at)
+_cache_lock       = threading.Lock()
 
 
 def _cache_get(key):
     with _cache_lock:
-        entry = _uptime_cache.get(key)
+        entry = _cache.get(key)
         if entry and entry[1] > time.time():
             return entry[0], True
         return None, False
 
 
-def _cache_set(key, value):
+def _cache_set(key, value, ttl: int):
     with _cache_lock:
-        _uptime_cache[key] = (value, time.time() + _CACHE_TTL)
+        _cache[key] = (value, time.time() + ttl)
 
 
-def invalidate_uptime_cache():
-    """Call after storing new ping results to clear stale uptime entries."""
-    with _cache_lock:
-        _uptime_cache.clear()
+def _paths_hash(host_paths: list) -> str:
+    """Stable short key for a list of paths — avoids huge cache keys."""
+    return hashlib.md5('|'.join(sorted(host_paths)).encode()).hexdigest()
 
 
 def get_conn():
@@ -41,7 +43,7 @@ def get_conn():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA cache_size=10000")
+    conn.execute("PRAGMA cache_size=500")   # 2MB per conn — short-lived conns don't need 40MB
     return conn
 
 
@@ -97,6 +99,10 @@ def get_latest_result(host_path: str):
 def get_latest_results_batch(host_paths: list) -> dict:
     if not host_paths:
         return {}
+    cache_key = f"lb:{_paths_hash(host_paths)}"
+    val, hit = _cache_get(cache_key)
+    if hit:
+        return val
     placeholders = ','.join('?' * len(host_paths))
     with get_conn() as conn:
         rows = conn.execute(f"""
@@ -109,7 +115,9 @@ def get_latest_results_batch(host_paths: list) -> dict:
             SELECT host_path, is_up, latency_ms, timestamp
             FROM ranked WHERE rn = 1
         """, host_paths).fetchall()
-    return {row['host_path']: row for row in rows}
+    result = {row['host_path']: row for row in rows}
+    _cache_set(cache_key, result, _LATEST_TTL)
+    return result
 
 
 def get_uptime(host_path: str, hours: int):
@@ -125,14 +133,14 @@ def get_uptime(host_path: str, hours: int):
             WHERE host_path = ? AND timestamp >= ?
         """, (host_path, since)).fetchone()
     result = None if (not row or row['total'] == 0) else round((row['up_count'] / row['total']) * 100, 2)
-    _cache_set(cache_key, result)
+    _cache_set(cache_key, result, _UPTIME_TTL)
     return result
 
 
 def get_uptime_multi(host_paths: list, hours: int):
     if not host_paths:
         return None
-    cache_key = f"um:{':'.join(sorted(host_paths))}:{hours}"
+    cache_key = f"um:{_paths_hash(host_paths)}:{hours}"
     val, hit = _cache_get(cache_key)
     if hit:
         return val
@@ -145,7 +153,7 @@ def get_uptime_multi(host_paths: list, hours: int):
             WHERE host_path IN ({placeholders}) AND timestamp >= ?
         """, host_paths + [since]).fetchone()
     result = None if (not row or row['total'] == 0) else round((row['up_count'] / row['total']) * 100, 2)
-    _cache_set(cache_key, result)
+    _cache_set(cache_key, result, _UPTIME_TTL)
     return result
 
 
