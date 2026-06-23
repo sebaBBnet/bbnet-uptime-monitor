@@ -21,8 +21,12 @@ import tree as tree_mgr
 _config: dict = {}
 _lock = threading.Lock()
 
-# Tracks hosts currently in alerted-down state to avoid repeat down alerts
+# Tracks hosts for which the DOWN email has been sent
 _alerted_down: set = set()
+# Pending timers: host_path -> threading.Timer (down email not yet sent)
+_pending_timers: dict = {}
+
+_DOWN_ALERT_DELAY = 300  # seconds before sending a down alert (5 minutes)
 
 # Rate limit: max 10 alert emails per minute
 _alert_timestamps: list = []
@@ -142,20 +146,27 @@ def _uptime_badge(pct) -> str:
 # ---------------------------------------------------------------------------
 
 def notify_down(host_path: str, host_name: str, host_ip: str):
-    """Called by pinger when a host is confirmed down."""
+    """Called by pinger when a host is confirmed down.
+    Email is delayed by _DOWN_ALERT_DELAY seconds — cancelled if host recovers first."""
     if not _config.get('enabled'):
         return
     if time.time() - _start_time < _STARTUP_GRACE:
         return  # Suppress alerts during startup grace period
     with _lock:
-        if host_path in _alerted_down:
-            return
-        _alerted_down.add(host_path)
+        if host_path in _alerted_down or host_path in _pending_timers:
+            return  # Already alerted or timer already running
 
-    now = int(time.time())
-    subject = f"🔴 DOWN: {host_name} ({host_ip})"
+    detected_at = int(time.time())
 
-    body_html = f"""
+    def _fire():
+        with _lock:
+            _pending_timers.pop(host_path, None)
+            if host_path in _alerted_down:
+                return  # notify_up already ran and cleared this
+            _alerted_down.add(host_path)
+
+        subject = f"🔴 DOWN: {host_name} ({host_ip})"
+        body_html = f"""
 <html><body style="font-family:sans-serif;color:#1a1a1a">
 <h2 style="color:#c53030">🔴 Host Down</h2>
 <table style="border-collapse:collapse;width:100%;max-width:500px">
@@ -165,17 +176,22 @@ def notify_down(host_path: str, host_name: str, host_ip: str):
       <td style="padding:6px 12px">{host_ip}</td></tr>
   <tr><td style="padding:6px 12px;font-weight:bold;background:#f7f7f7">Path</td>
       <td style="padding:6px 12px">{host_path}</td></tr>
-  <tr><td style="padding:6px 12px;font-weight:bold;background:#f7f7f7">Time</td>
-      <td style="padding:6px 12px">{_fmt_time(now)}</td></tr>
+  <tr><td style="padding:6px 12px;font-weight:bold;background:#f7f7f7">Detected</td>
+      <td style="padding:6px 12px">{_fmt_time(detected_at)}</td></tr>
 </table>
 <p style="color:#718096;font-size:12px;margin-top:24px">BBnet Uptime Monitor</p>
 </body></html>"""
+        body_text = (
+            f"HOST DOWN\n\nHost: {host_name}\nIP: {host_ip}\n"
+            f"Path: {host_path}\nDetected: {_fmt_time(detected_at)}"
+        )
+        _send_email(subject, body_html, body_text)
 
-    body_text = (
-        f"HOST DOWN\n\nHost: {host_name}\nIP: {host_ip}\n"
-        f"Path: {host_path}\nTime: {_fmt_time(now)}"
-    )
-    threading.Thread(target=_send_email, args=(subject, body_html, body_text), daemon=True).start()
+    timer = threading.Timer(_DOWN_ALERT_DELAY, _fire)
+    timer.daemon = True
+    with _lock:
+        _pending_timers[host_path] = timer
+    timer.start()
 
 
 def notify_up(host_path: str, host_name: str, host_ip: str, down_since: int = None):
@@ -183,8 +199,14 @@ def notify_up(host_path: str, host_name: str, host_ip: str, down_since: int = No
     if not _config.get('enabled'):
         return
     with _lock:
+        # Cancel pending timer if host recovered before the delay fired
+        timer = _pending_timers.pop(host_path, None)
         was_alerted = host_path in _alerted_down
         _alerted_down.discard(host_path)
+
+    if timer:
+        timer.cancel()
+        return  # Never sent the down email, so no recovery email needed
 
     if not was_alerted:
         return
