@@ -75,49 +75,60 @@ def init_db():
                 paused_at INTEGER NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS latest_ping_results (
+                host_path  TEXT PRIMARY KEY,
+                timestamp  INTEGER NOT NULL,
+                is_up      INTEGER NOT NULL,
+                latency_ms REAL
+            )
+        """)
+        # Backfill latest_ping_results from ping_results if empty
+        empty = conn.execute("SELECT COUNT(*) FROM latest_ping_results").fetchone()[0] == 0
+        if empty:
+            conn.execute("""
+                INSERT OR REPLACE INTO latest_ping_results (host_path, timestamp, is_up, latency_ms)
+                SELECT host_path, timestamp, is_up, latency_ms FROM (
+                    SELECT host_path, timestamp, is_up, latency_ms,
+                           ROW_NUMBER() OVER (PARTITION BY host_path ORDER BY timestamp DESC) AS rn
+                    FROM ping_results
+                ) WHERE rn = 1
+            """)
 
 
 def store_result(host_path: str, is_up: bool, latency_ms: float = None):
+    ts = int(time.time())
+    up = 1 if is_up else 0
     with get_conn() as conn:
         conn.execute(
             "INSERT INTO ping_results (host_path, timestamp, is_up, latency_ms) VALUES (?, ?, ?, ?)",
-            (host_path, int(time.time()), 1 if is_up else 0, latency_ms)
+            (host_path, ts, up, latency_ms)
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO latest_ping_results (host_path, timestamp, is_up, latency_ms) VALUES (?, ?, ?, ?)",
+            (host_path, ts, up, latency_ms)
         )
 
 
 def get_latest_result(host_path: str):
     with get_conn() as conn:
-        return conn.execute("""
-            SELECT is_up, latency_ms, timestamp
-            FROM ping_results
-            WHERE host_path = ?
-            ORDER BY timestamp DESC
-            LIMIT 1
-        """, (host_path,)).fetchone()
+        return conn.execute(
+            "SELECT is_up, latency_ms, timestamp FROM latest_ping_results WHERE host_path = ?",
+            (host_path,)
+        ).fetchone()
 
 
 def get_latest_results_batch(host_paths: list) -> dict:
     if not host_paths:
         return {}
-    cache_key = f"lb:{_paths_hash(host_paths)}"
-    val, hit = _cache_get(cache_key)
-    if hit:
-        return val
+    # latest_ping_results is a 800-row table — no cache needed, always fast
     placeholders = ','.join('?' * len(host_paths))
     with get_conn() as conn:
-        rows = conn.execute(f"""
-            WITH ranked AS (
-                SELECT host_path, is_up, latency_ms, timestamp,
-                       ROW_NUMBER() OVER (PARTITION BY host_path ORDER BY timestamp DESC) AS rn
-                FROM ping_results
-                WHERE host_path IN ({placeholders})
-            )
-            SELECT host_path, is_up, latency_ms, timestamp
-            FROM ranked WHERE rn = 1
-        """, host_paths).fetchall()
-    result = {row['host_path']: row for row in rows}
-    _cache_set(cache_key, result, _LATEST_TTL)
-    return result
+        rows = conn.execute(
+            f"SELECT host_path, is_up, latency_ms, timestamp FROM latest_ping_results WHERE host_path IN ({placeholders})",
+            host_paths
+        ).fetchall()
+    return {row['host_path']: row for row in rows}
 
 
 def get_uptime(host_path: str, hours: int):
