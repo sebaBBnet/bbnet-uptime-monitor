@@ -259,37 +259,30 @@ def index():
 # ---------------------------------------------------------------------------
 
 def _node_stats(node: dict, latest_batch: dict, paused_set: set = None, leaves: list = None) -> dict:
-    """Build the stats dict for a single node (leaf or group)."""
+    """Build the stats dict for a single node (leaf or group). Uptime excluded — use /api/node/uptime."""
     if paused_set is None:
         paused_set = set()
 
     if node['host']:
-        # Leaf node
-        is_paused = node['path'] in paused_set
-        row = latest_batch.get(node['path'])
-        is_up = bool(row['is_up']) if (row and not is_paused) else None
-        latency = row['latency_ms'] if row else None
-        last_check = row['timestamp'] if row else None
+        is_paused  = node['path'] in paused_set
+        row        = latest_batch.get(node['path'])
+        is_up      = bool(row['is_up']) if (row and not is_paused) else None
         return {
-            'name': node['name'],
-            'path': node['path'],
-            'is_leaf': True,
-            'host': node['host'],
-            'ping_interval': node['ping_interval'],
-            'is_up': is_up,
-            'is_paused': is_paused,
-            'latency_ms': latency,
-            'last_check': last_check,
-            'host_count': 0 if is_paused else 1,
-            'up_count': (1 if is_up else 0) if is_up is not None else 0,
-            'down_count': (0 if is_up else 1) if is_up is not None else 0,
+            'name':         node['name'],
+            'path':         node['path'],
+            'is_leaf':      True,
+            'host':         node['host'],
+            'ping_interval':node['ping_interval'],
+            'is_up':        is_up,
+            'is_paused':    is_paused,
+            'latency_ms':   row['latency_ms'] if row else None,
+            'last_check':   row['timestamp']  if row else None,
+            'host_count':   0 if is_paused else 1,
+            'up_count':     (1 if is_up else 0) if is_up is not None else 0,
+            'down_count':   (0 if is_up else 1) if is_up is not None else 0,
             'paused_count': 1 if is_paused else 0,
-            'uptime_24h': database.get_uptime(node['path'], 24),
-            'uptime_7d': database.get_uptime(node['path'], 168),
-            'uptime_30d': database.get_uptime(node['path'], 720),
         }
     else:
-        # Group node — aggregate from descendant leaves, excluding paused
         if leaves is None:
             leaves = tree_mgr.get_all_leaves(node['children'])
         active_leaves = [l for l in leaves if l['path'] not in paused_set]
@@ -298,16 +291,13 @@ def _node_stats(node: dict, latest_batch: dict, paused_set: set = None, leaves: 
         host_count    = len(active_leaves)
         up_count      = sum(1 for p in active_paths if latest_batch.get(p) and latest_batch[p]['is_up'])
         return {
-            'name': node['name'],
-            'path': node['path'],
-            'is_leaf': False,
-            'host_count': host_count,
-            'up_count': up_count,
-            'down_count': host_count - up_count,
+            'name':         node['name'],
+            'path':         node['path'],
+            'is_leaf':      False,
+            'host_count':   host_count,
+            'up_count':     up_count,
+            'down_count':   host_count - up_count,
             'paused_count': paused_count,
-            'uptime_24h': database.get_uptime_multi(active_paths, 24) if active_paths else None,
-            'uptime_7d':  database.get_uptime_multi(active_paths, 168) if active_paths else None,
-            'uptime_30d': database.get_uptime_multi(active_paths, 720) if active_paths else None,
         }
 
 
@@ -346,6 +336,38 @@ def api_csrf_token():
     return jsonify({'csrf_token': session['csrf_token']})
 
 
+@app.route('/api/node/uptime')
+@login_required
+def api_node_uptime():
+    """
+    Returns uptime percentages for all children of `path`.
+    Separated from /api/node so the tile view can render status instantly
+    and fill in uptime badges asynchronously.
+    """
+    path      = request.args.get('path', '').strip('/')
+    children  = tree_mgr.get_children(path)
+    paused_set = database.get_all_paused()
+
+    result = {}
+    for child in (children or []):
+        if child['host']:
+            result[child['path']] = {
+                'uptime_24h': database.get_uptime(child['path'], 24),
+                'uptime_7d':  database.get_uptime(child['path'], 168),
+                'uptime_30d': database.get_uptime(child['path'], 720),
+            }
+        else:
+            leaves = tree_mgr.get_all_leaves(child['children'])
+            active = [l['path'] for l in leaves if l['path'] not in paused_set]
+            result[child['path']] = {
+                'uptime_24h': database.get_uptime_multi(active, 24)  if active else None,
+                'uptime_7d':  database.get_uptime_multi(active, 168) if active else None,
+                'uptime_30d': database.get_uptime_multi(active, 720) if active else None,
+            }
+
+    return jsonify({'uptime': result})
+
+
 @app.route('/api/reload', methods=['POST'])
 @login_required
 @csrf_required
@@ -373,6 +395,7 @@ def api_summary():
         'down': len(active_paths) - up,
         'paused': paused_count,
         'uptime_24h': database.get_uptime_multi(active_paths, 24) if active_paths else None,
+        'site_name': config.get('site_name', 'BBnet Uptime Monitor'),
     })
 
 

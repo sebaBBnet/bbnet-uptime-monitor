@@ -734,6 +734,7 @@ async function fetchTileUptime(path, items) {
 
 function renderSummary(s) {
   if (!s) return;
+  if (s.site_name) document.title = s.site_name;
   document.getElementById('summaryUp').textContent     = s.up;
   document.getElementById('summaryDown').textContent   = s.down;
   document.getElementById('summaryPaused').textContent = s.paused ?? 0;
