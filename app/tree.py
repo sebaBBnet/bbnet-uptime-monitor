@@ -2,20 +2,17 @@
 Host tree management — parses Xymon-compatible hosts.cfg format.
 
 File format:
-  page <slug> <Display Name>     — top-level page (becomes a folder in the dashboard)
-  subpage <slug> <Display Name>  — sub-page under the current page
-  include <filename>             — include another file (relative to hosts.cfg location)
-  IP HOSTNAME # flags            — active host entry (ICMP-pinged)
-  # anything                     — comment / disabled host (always skipped)
-  ## or ### ...                  — also skipped (Xymon convention for disabled entries)
-
-The 'dialup' and 'testip' flags after # are accepted but ignored — all active hosts
-are monitored by ICMP ping regardless.
+  page <slug> <Display Name>        — top-level page
+  subpage <slug> <Display Name>     — sub-page under the current page
+  subsubpage <slug> <Display Name>  — sub-sub-page under the current subpage
+  include <filename>                — include another file (relative to hosts.cfg location)
+  IP HOSTNAME # flags               — active host entry (ICMP-pinged)
+  # anything                        — comment / disabled host (always skipped)
 
 Hierarchy rules:
-  - Hosts before the first subpage in a page go directly under that page node.
-  - Hosts after a subpage declaration go under that subpage.
-  - A new 'page' directive resets the current subpage context.
+  - Hosts go under the deepest active context: subsubpage > subpage > page.
+  - A new 'page' resets subpage and subsubpage context.
+  - A new 'subpage' resets subsubpage context.
 """
 
 import re
@@ -69,8 +66,9 @@ def _parse_file(filepath: Path, default_interval: int) -> list:
 
     base_dir = filepath.parent
     nodes = []          # top-level page nodes produced by this file
-    current_page = None
+    current_page    = None
     current_subpage = None
+    current_subsubpage = None
 
     for raw in text.splitlines():
         line = raw.strip()
@@ -87,16 +85,18 @@ def _parse_file(filepath: Path, default_interval: int) -> list:
             nodes.extend(inc_nodes)
             # After returning from an included file, reset context so the next
             # 'page' in the main file starts fresh.
-            current_page = None
-            current_subpage = None
+            current_page       = None
+            current_subpage    = None
+            current_subsubpage = None
             continue
 
         # ── page ───────────────────────────────────────────────────────────
         m = re.match(r'^page\s+(\S+)\s+(.+)$', line, re.IGNORECASE)
         if m:
             slug, display = m.group(1), m.group(2).strip()
-            current_page = _make_node(display, slug, slug, None, default_interval)
-            current_subpage = None
+            current_page       = _make_node(display, slug, slug, None, default_interval)
+            current_subpage    = None
+            current_subsubpage = None
             nodes.append(current_page)
             continue
 
@@ -105,16 +105,33 @@ def _parse_file(filepath: Path, default_interval: int) -> list:
         if m:
             slug, display = m.group(1), m.group(2).strip()
             if current_page is None:
-                # Orphaned subpage — create an implicit page to hold it
                 current_page = _make_node('Default', 'default', 'default', None, default_interval)
                 nodes.append(current_page)
             path = f"{current_page['path']}/{slug}"
-            current_subpage = _make_node(display, slug, path, None, default_interval)
+            current_subpage    = _make_node(display, slug, path, None, default_interval)
+            current_subsubpage = None
             current_page['children'].append(current_subpage)
             continue
 
+        # ── subsubpage ─────────────────────────────────────────────────────
+        m = re.match(r'^subsubpage\s+(\S+)\s+(.+)$', line, re.IGNORECASE)
+        if m:
+            slug, display = m.group(1), m.group(2).strip()
+            if current_subpage is None:
+                # No parent subpage — treat as a regular subpage
+                if current_page is None:
+                    current_page = _make_node('Default', 'default', 'default', None, default_interval)
+                    nodes.append(current_page)
+                path = f"{current_page['path']}/{slug}"
+                current_subpage = _make_node(display, slug, path, None, default_interval)
+                current_page['children'].append(current_subpage)
+            else:
+                path = f"{current_subpage['path']}/{slug}"
+                current_subsubpage = _make_node(display, slug, path, None, default_interval)
+                current_subpage['children'].append(current_subsubpage)
+            continue
+
         # ── skip other Xymon directives ────────────────────────────────────
-        # title, group, group-compress, NAME:, subparent, etc.
         if re.match(r'^(title|group|NAME:|subparent)\b', line, re.IGNORECASE):
             continue
 
@@ -122,7 +139,9 @@ def _parse_file(filepath: Path, default_interval: int) -> list:
         m = re.match(r'^(\d{1,3}(?:\.\d{1,3}){3})\s+(\S+)', line)
         if m:
             ip, hostname = m.group(1), m.group(2)
-            parent = current_subpage if current_subpage is not None else current_page
+            parent = current_subsubpage if current_subsubpage is not None \
+                else current_subpage if current_subpage is not None \
+                else current_page
             if parent is None:
                 # Host with no page context — skip silently
                 continue
