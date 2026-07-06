@@ -39,6 +39,8 @@ scheduler = pinger_module.PingScheduler(
     max_workers=config.get('max_ping_workers', 50),
     ping_count=config.get('ping_count', 5),
     ping_timeout=config.get('ping_timeout', 1),
+    rapid_retry_interval=config.get('rapid_retry_interval', 20),
+    recovery_pings=config.get('recovery_pings', 3),
 )
 scheduler.start()
 
