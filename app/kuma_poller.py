@@ -139,6 +139,57 @@ class KumaPoller:
             data = None
         return resp.status_code, body, data
 
+    def probe(self) -> list:
+        """
+        Try several endpoint + auth combinations and return a result list.
+        Each entry: {endpoint, auth, http_status, content_type, is_json, preview}
+        """
+        endpoints = [
+            '/api/monitors',
+            '/api/monitor',
+            '/api/v1/monitors',
+        ]
+        auth_variants = [
+            ('Bearer',  {'Authorization': f'Bearer {self.api_key}'}),
+            ('apikey',  {'Authorization': f'apikey {self.api_key}'}),
+            ('X-API-Key', {'X-API-Key': self.api_key}),
+            ('query',   {}),   # api key as query param
+        ]
+
+        results = []
+        base_session = requests.Session()
+        base_session.headers.update({'Accept': 'application/json'})
+
+        for path in endpoints:
+            for auth_name, headers in auth_variants:
+                url = f"{self.url}{path}"
+                params = {'apikey': self.api_key} if auth_name == 'query' else {}
+                try:
+                    resp = base_session.get(url, headers=headers, params=params,
+                                            timeout=10, allow_redirects=True)
+                    ct = resp.headers.get('Content-Type', '')
+                    try:
+                        resp.json()
+                        is_json = True
+                    except Exception:
+                        is_json = False
+                    results.append({
+                        'endpoint':     path,
+                        'auth':         auth_name,
+                        'http_status':  resp.status_code,
+                        'content_type': ct,
+                        'is_json':      is_json,
+                        'preview':      resp.text[:200],
+                    })
+                except Exception as e:
+                    results.append({
+                        'endpoint':    path,
+                        'auth':        auth_name,
+                        'error':       str(e),
+                    })
+
+        return results
+
 
 # ---------------------------------------------------------------------------
 # Helpers

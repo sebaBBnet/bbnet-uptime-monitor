@@ -851,6 +851,19 @@ def api_status_page_data(slug):
     })
 
 
+@app.route('/api/kuma-probe')
+@login_required
+def api_kuma_probe():
+    """Probe multiple Kuma endpoint + auth combinations to find what works."""
+    if kuma_poller is None:
+        return jsonify({'error': 'Kuma integration not configured'}), 503
+    try:
+        results = kuma_poller.probe()
+        return jsonify({'results': results})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 502
+
+
 @app.route('/api/kuma-test')
 @login_required
 def api_kuma_test():
