@@ -462,6 +462,84 @@ canvas#latencyCanvas {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 10px; overflow: hidden;
 }
+
+/* ---- Status Pages management ---- */
+#statusPagesView { display: none; }
+.sp-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+.sp-toolbar h2 { font-size: 1rem; font-weight: 700; color: #fff; }
+.btn-primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+.btn-primary:hover { background: #3182ce; }
+.btn-danger { color: var(--red); }
+.btn-danger:hover { background: rgba(252,129,129,.12); border-color: var(--red); }
+
+.sp-list { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.sp-row  {
+  display: flex; align-items: center; gap: 1rem; padding: .85rem 1.1rem;
+  border-bottom: 1px solid var(--border);
+}
+.sp-row:last-child { border-bottom: none; }
+.sp-info { flex: 1; min-width: 0; }
+.sp-name { font-size: .9rem; font-weight: 600; color: #fff; }
+.sp-url  { font-size: .72rem; color: var(--muted); font-family: 'Consolas', monospace; margin-top: 2px; }
+.sp-badges { display: flex; align-items: center; gap: .4rem; flex-shrink: 0; flex-wrap: wrap; }
+.sp-badge {
+  font-size: .7rem; font-weight: 600; padding: .2rem .55rem;
+  border-radius: 12px;
+}
+.sp-badge.pub  { background: rgba(72,187,120,.12);  color: #68d391; }
+.sp-badge.lock { background: rgba(66,153,225,.12);  color: var(--blue); }
+.sp-badge.lay  { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+.sp-actions { display: flex; align-items: center; gap: .4rem; flex-shrink: 0; }
+
+.sp-empty {
+  padding: 3rem 1rem; text-align: center; color: var(--muted);
+  font-size: .875rem;
+}
+
+/* Status pages modal */
+#spModal {
+  display: none; position: fixed; inset: 0; z-index: 300;
+  align-items: center; justify-content: center;
+  background: rgba(0,0,0,.65);
+}
+.sp-modal-box {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 1.5rem; width: 100%; max-width: 520px;
+  max-height: 90vh; overflow-y: auto;
+}
+.sp-modal-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.25rem; }
+.sp-modal-hdr h3 { font-size: 1rem; font-weight: 700; color: #fff; }
+.form-group { margin-bottom: 1rem; }
+.form-label { display: block; font-size: .78rem; color: var(--muted); margin-bottom: .35rem; font-weight: 500; }
+.form-input {
+  width: 100%; padding: .55rem .85rem;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text); font-size: .875rem; outline: none;
+}
+.form-input:focus { border-color: var(--blue); }
+.layout-picker { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+.layout-opt {
+  padding: .5rem .75rem; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--surface2); color: var(--muted);
+  cursor: pointer; font-size: .8rem; text-align: center;
+  transition: border-color .15s, color .15s;
+}
+.layout-opt:hover { border-color: #4a5568; }
+.layout-opt.sel { border-color: var(--blue); color: var(--blue); background: rgba(66,153,225,.08); }
+.pages-picker {
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: .5rem; max-height: 160px; overflow-y: auto; background: var(--bg);
+}
+.page-chk { display: flex; align-items: center; gap: .6rem; padding: .3rem .25rem; cursor: pointer; }
+.page-chk input { cursor: pointer; }
+.page-chk span { font-size: .85rem; color: var(--text); }
+.url-preview {
+  font-size: .75rem; font-family: 'Consolas', monospace;
+  color: var(--muted); background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 6px; padding: .4rem .75rem; margin-top: .35rem; word-break: break-all;
+}
+.form-hint { font-size: .72rem; color: var(--muted); margin-top: .3rem; }
+.sp-modal-footer { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border); }
 </style>
 </head>
 <body>
@@ -490,6 +568,7 @@ canvas#latencyCanvas {
     <span class="refresh-ts" id="refreshTs"></span>
     <button class="btn" onclick="navigate('')">🏠 Home</button>
     <button class="btn" id="outagesBtn" onclick="showOutages()">📋 Outages</button>
+    <button class="btn" id="spBtn" onclick="showStatusPages()">📄 Status Pages</button>
     <button class="btn" id="layoutBtn" onclick="toggleLayout()" title="Switch between tile and list view">⊞ Tiles</button>
     <button class="btn" onclick="reloadHosts()">⟳ Reload hosts</button>
     <button class="btn" onclick="handleRefresh()">↺ Refresh</button>
@@ -602,6 +681,65 @@ canvas#latencyCanvas {
   </div>
 </main>
 
+<!-- ====== STATUS PAGES VIEW ====== -->
+<main class="main" id="statusPagesView">
+  <div class="sp-toolbar">
+    <h2>Status pages</h2>
+    <button class="btn btn-primary" onclick="openSpModal()">+ New status page</button>
+  </div>
+  <div id="spList"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+</main>
+
+<!-- ====== STATUS PAGES MODAL ====== -->
+<div id="spModal">
+  <div class="sp-modal-box" onclick="event.stopPropagation()">
+    <div class="sp-modal-hdr">
+      <h3 id="spModalTitle">New status page</h3>
+      <button class="modal-close" onclick="closeSpModal()">✕</button>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Title</label>
+      <input class="form-input" id="spTitle" placeholder="PCC Network Status" oninput="spAutoSlug()">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Slug (URL path)</label>
+      <input class="form-input" id="spSlug" placeholder="pcc-network-status" oninput="spUpdatePreview()">
+      <div class="url-preview" id="spUrlPreview">/status/</div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Layout</label>
+      <div class="layout-picker" id="spLayoutPicker">
+        <div class="layout-opt sel" data-layout="banner-list" onclick="spSelectLayout(this)">📋 Banner + list</div>
+        <div class="layout-opt" data-layout="tile-grid"   onclick="spSelectLayout(this)">⊞ Tile grid</div>
+        <div class="layout-opt" data-layout="grouped"     onclick="spSelectLayout(this)">☰ Grouped</div>
+        <div class="layout-opt" data-layout="minimal"     onclick="spSelectLayout(this)">· Minimal</div>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Include pages</label>
+      <div class="pages-picker" id="spPagesPicker">
+        <div style="color:var(--muted);font-size:.8rem;padding:.25rem">Loading…</div>
+      </div>
+      <div class="form-hint">Leave all unchecked to include all pages.</div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Password <span style="font-weight:400;color:var(--muted)">(leave blank for public)</span></label>
+      <input class="form-input" id="spPassword" type="password" placeholder="No password — public page">
+      <div class="form-hint" id="spPasswordHint"></div>
+    </div>
+
+    <div class="sp-modal-footer">
+      <button class="btn" onclick="closeSpModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveStatusPage()" id="spSaveBtn">Create page</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -646,6 +784,8 @@ function routeFromHash() {
   const hash = window.location.hash.replace('#', '');
   if (hash === 'outages') {
     if (viewMode !== 'outages') showOutages();
+  } else if (hash === 'status-pages') {
+    if (viewMode !== 'status-pages') showStatusPages();
   } else if (hash.startsWith('host:')) {
     const p = hash.slice(5);
     if (p !== currentHost || viewMode !== 'host') {
@@ -1372,11 +1512,12 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal()
 // View switching
 // ============================================================
 function showView(mode) {
-  document.getElementById('tileView').style.display    = mode === 'tiles'   ? 'block' : 'none';
-  document.getElementById('hostView').style.display    = mode === 'host'    ? 'block' : 'none';
-  document.getElementById('outagesView').style.display = mode === 'outages' ? 'block' : 'none';
-  // Highlight outages button when active
+  document.getElementById('tileView').style.display        = mode === 'tiles'         ? 'block' : 'none';
+  document.getElementById('hostView').style.display        = mode === 'host'          ? 'block' : 'none';
+  document.getElementById('outagesView').style.display     = mode === 'outages'       ? 'block' : 'none';
+  document.getElementById('statusPagesView').style.display = mode === 'status-pages'  ? 'block' : 'none';
   document.getElementById('outagesBtn').classList.toggle('active', mode === 'outages');
+  document.getElementById('spBtn').classList.toggle('active', mode === 'status-pages');
 }
 
 function toggleLayout() {
@@ -1435,6 +1576,218 @@ function showOutages() {
   showView('outages');
   clearTimeout(autoTimer);
   fetchOutages();
+}
+
+// ============================================================
+// Status pages management
+// ============================================================
+let spEditSlug     = null;   // null = creating; string = editing
+let spAvailPages   = [];     // top-level pages from tree
+let spSelectedLayout = 'banner-list';
+
+const LAYOUT_LABELS = {
+  'banner-list': '📋 Banner + list',
+  'tile-grid':   '⊞ Tile grid',
+  'grouped':     '☰ Grouped',
+  'minimal':     '· Minimal',
+};
+
+function showStatusPages() {
+  viewMode = 'status-pages';
+  window.location.hash = '#status-pages';
+  showView('status-pages');
+  clearTimeout(autoTimer);
+  fetchStatusPagesList();
+}
+
+async function fetchStatusPagesList() {
+  document.getElementById('spList').innerHTML =
+    '<div class="loading"><div class="spinner"></div> Loading…</div>';
+  try {
+    const r = await fetch('/api/status-pages');
+    if (r.status === 401) { location.href = '/login'; return; }
+    const d = await r.json();
+    renderSpList(d.pages || []);
+  } catch (e) {
+    document.getElementById('spList').innerHTML =
+      '<div class="sp-empty">Failed to load status pages.</div>';
+  }
+}
+
+function renderSpList(pages) {
+  if (!pages.length) {
+    document.getElementById('spList').innerHTML =
+      '<div class="sp-empty">No status pages yet.<br>Create one to share a read-only view with clients.</div>';
+    return;
+  }
+  const host = window.location.host;
+  document.getElementById('spList').innerHTML =
+    '<div class="sp-list">' + pages.map(p => {
+      const url = `/status/${esc(p.slug)}`;
+      return `<div class="sp-row">
+        <div class="sp-info">
+          <div class="sp-name">${esc(p.title)}</div>
+          <div class="sp-url">${url}</div>
+        </div>
+        <div class="sp-badges">
+          <span class="sp-badge ${p.has_password ? 'lock' : 'pub'}">${p.has_password ? '🔒 Protected' : '🌐 Public'}</span>
+          <span class="sp-badge lay">${esc(LAYOUT_LABELS[p.layout] || p.layout)}</span>
+        </div>
+        <div class="sp-actions">
+          <button class="btn" onclick="copySpUrl('${esc(p.slug)}')" title="Copy URL">Copy URL</button>
+          <button class="btn" onclick="openSpEdit('${esc(p.slug)}')">Edit</button>
+          <button class="btn btn-danger" onclick="deleteStatusPage('${esc(p.slug)}', '${esc(p.title)}')">Delete</button>
+        </div>
+      </div>`;
+    }).join('') + '</div>';
+}
+
+function copySpUrl(slug) {
+  const url = window.location.origin + '/status/' + slug;
+  navigator.clipboard.writeText(url).then(() => toast('URL copied to clipboard', 'ok'));
+}
+
+async function openSpModal() {
+  spEditSlug = null;
+  document.getElementById('spModalTitle').textContent = 'New status page';
+  document.getElementById('spSaveBtn').textContent    = 'Create page';
+  document.getElementById('spTitle').value    = '';
+  document.getElementById('spSlug').value     = '';
+  document.getElementById('spPassword').value = '';
+  document.getElementById('spPasswordHint').textContent = '';
+  spSelectedLayout = 'banner-list';
+  spUpdatePreview();
+  spSelectLayoutByKey('banner-list');
+  await loadSpPages([]);
+  document.getElementById('spModal').style.display = 'flex';
+  document.getElementById('spTitle').focus();
+}
+
+async function openSpEdit(slug) {
+  // Find the page in the already-rendered list — re-fetch to be safe
+  try {
+    const r = await fetch('/api/status-pages');
+    const d = await r.json();
+    const page = (d.pages || []).find(p => p.slug === slug);
+    if (!page) { toast('Page not found', 'err'); return; }
+
+    spEditSlug = slug;
+    document.getElementById('spModalTitle').textContent = 'Edit status page';
+    document.getElementById('spSaveBtn').textContent    = 'Save changes';
+    document.getElementById('spTitle').value    = page.title;
+    document.getElementById('spSlug').value     = page.slug;
+    document.getElementById('spPassword').value = '';
+    document.getElementById('spPasswordHint').textContent =
+      page.has_password ? 'Leave blank to keep existing password.' : '';
+    spSelectedLayout = page.layout || 'banner-list';
+    spSelectLayoutByKey(spSelectedLayout);
+    spUpdatePreview();
+    await loadSpPages(page.included_pages || []);
+    document.getElementById('spModal').style.display = 'flex';
+    document.getElementById('spTitle').focus();
+  } catch (e) { toast('Failed to load page', 'err'); }
+}
+
+function closeSpModal() {
+  document.getElementById('spModal').style.display = 'none';
+}
+document.getElementById('spModal').addEventListener('click', closeSpModal);
+
+async function loadSpPages(selected) {
+  const picker = document.getElementById('spPagesPicker');
+  try {
+    if (!spAvailPages.length) {
+      const r = await fetch('/api/node?path=');
+      if (r.ok) {
+        const d = await r.json();
+        spAvailPages = (d.items || []).filter(i => !i.is_leaf);
+      }
+    }
+    if (!spAvailPages.length) {
+      picker.innerHTML = '<div style="color:var(--muted);font-size:.8rem;padding:.25rem">No pages found</div>';
+      return;
+    }
+    picker.innerHTML = spAvailPages.map(p => {
+      const checked = selected.includes(p.path) ? 'checked' : '';
+      return `<label class="page-chk">
+        <input type="checkbox" value="${esc(p.path)}" ${checked}>
+        <span>${esc(p.name)}</span>
+      </label>`;
+    }).join('');
+  } catch (e) {
+    picker.innerHTML = '<div style="color:var(--muted);font-size:.8rem;padding:.25rem">Failed to load pages</div>';
+  }
+}
+
+function spAutoSlug() {
+  if (spEditSlug) return;   // don't auto-overwrite when editing
+  const title = document.getElementById('spTitle').value;
+  const slug  = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  document.getElementById('spSlug').value = slug;
+  spUpdatePreview();
+}
+
+function spUpdatePreview() {
+  const slug = document.getElementById('spSlug').value || '';
+  document.getElementById('spUrlPreview').textContent = '/status/' + slug;
+}
+
+function spSelectLayout(el) {
+  document.querySelectorAll('#spLayoutPicker .layout-opt').forEach(o => o.classList.remove('sel'));
+  el.classList.add('sel');
+  spSelectedLayout = el.dataset.layout;
+}
+
+function spSelectLayoutByKey(key) {
+  document.querySelectorAll('#spLayoutPicker .layout-opt').forEach(o => {
+    o.classList.toggle('sel', o.dataset.layout === key);
+  });
+}
+
+function spGetSelectedPages() {
+  return Array.from(document.querySelectorAll('#spPagesPicker input:checked')).map(i => i.value);
+}
+
+async function saveStatusPage() {
+  const title    = document.getElementById('spTitle').value.trim();
+  const slug     = document.getElementById('spSlug').value.trim().toLowerCase();
+  const password = document.getElementById('spPassword').value;
+  const included = spGetSelectedPages();
+
+  if (!title)                             { toast('Title is required', 'err'); return; }
+  if (!slug)                              { toast('Slug is required', 'err'); return; }
+  if (!/^[a-z0-9-]+$/.test(slug))        { toast('Slug: only lowercase letters, numbers, hyphens', 'err'); return; }
+
+  const body = { title, slug, layout: spSelectedLayout, included_pages: included };
+  if (password || !spEditSlug) body.password = password;  // always send when creating
+
+  try {
+    const url    = spEditSlug ? `/api/status-pages/${spEditSlug}` : '/api/status-pages';
+    const method = spEditSlug ? 'PUT' : 'POST';
+    const r = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok) { toast(d.error || 'Save failed', 'err'); return; }
+    toast(spEditSlug ? 'Status page updated' : 'Status page created', 'ok');
+    closeSpModal();
+    fetchStatusPagesList();
+  } catch (e) { toast('Save failed', 'err'); }
+}
+
+async function deleteStatusPage(slug, title) {
+  if (!confirm(`Delete status page "${title}"? This cannot be undone.`)) return;
+  try {
+    const r = await fetch(`/api/status-pages/${slug}`, {
+      method: 'DELETE',
+      headers: { 'X-CSRF-Token': csrfToken },
+    });
+    if (!r.ok) { toast('Delete failed', 'err'); return; }
+    toast('Status page deleted', 'ok');
+    fetchStatusPagesList();
+  } catch (e) { toast('Delete failed', 'err'); }
 }
 
 async function fetchOutages() {

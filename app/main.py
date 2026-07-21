@@ -1,7 +1,9 @@
 """
 Uptime Monitor — Flask web application.
 """
+import json
 import os
+import re
 import secrets
 import time
 from datetime import timedelta
@@ -10,6 +12,7 @@ from pathlib import Path
 
 import yaml
 from flask import Flask, jsonify, redirect, render_template_string, request, session, url_for
+from werkzeug.security import check_password_hash, generate_password_hash
 
 import alerter
 import database
@@ -207,6 +210,79 @@ LOGIN_HTML = """<!DOCTYPE html>
 </div>
 </body>
 </html>"""
+
+STATUS_PASSWORD_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ title }} — Status</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0f1117; color: #e2e8f0; font-family: 'Segoe UI', system-ui, sans-serif;
+         display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .card { background: #1a1f2e; border: 1px solid #2d3748; border-radius: 12px;
+          padding: 2.5rem; width: 100%; max-width: 360px; }
+  .icon { font-size: 2rem; margin-bottom: 1rem; }
+  h1 { font-size: 1.3rem; margin-bottom: .25rem; color: #fff; }
+  p { color: #718096; font-size: .875rem; margin-bottom: 1.5rem; }
+  input { width: 100%; padding: .6rem .9rem; background: #0f1117; border: 1px solid #2d3748;
+          border-radius: 8px; color: #e2e8f0; font-size: 1rem; margin-bottom: 1rem; outline: none; }
+  input:focus { border-color: #4299e1; }
+  button { width: 100%; padding: .65rem; background: #3182ce; border: none;
+           border-radius: 8px; color: #fff; font-size: 1rem; cursor: pointer; }
+  button:hover { background: #2b6cb0; }
+  .err { background: #742a2a; border: 1px solid #fc8181; border-radius: 6px;
+         padding: .5rem .9rem; font-size: .875rem; margin-bottom: 1rem; color: #fed7d7; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">📊</div>
+  <h1>{{ title }}</h1>
+  <p>This status page is password protected.</p>
+  {% if error %}<div class="err">{{ error }}</div>{% endif %}
+  <form method="post">
+    <input type="password" name="password" autofocus placeholder="Enter password">
+    <button type="submit">View status page</button>
+  </form>
+</div>
+</body>
+</html>"""
+
+
+def _build_status_group(node: dict, latest_batch: dict, paused_set: set) -> dict:
+    """Recursively build a status group for the status page data API."""
+    if node.get('host'):
+        is_paused = node['path'] in paused_set
+        row = latest_batch.get(node['path'])
+        is_up = bool(row['is_up']) if (row and not is_paused) else None
+        return {
+            'name':       node['name'],
+            'path':       node['path'],
+            'is_leaf':    True,
+            'is_up':      is_up,
+            'is_paused':  is_paused,
+            'latency_ms': row['latency_ms'] if row else None,
+            'last_check': row['timestamp']  if row else None,
+            'host_count': 0 if is_paused else 1,
+            'up_count':   (1 if is_up else 0) if (is_up is not None and not is_paused) else 0,
+            'down_count': (0 if is_up else 1) if (is_up is not None and not is_paused) else 0,
+        }
+    else:
+        children = [_build_status_group(c, latest_batch, paused_set) for c in node.get('children', [])]
+        host_count = sum(c['host_count'] for c in children)
+        up_count   = sum(c['up_count']   for c in children)
+        return {
+            'name':       node['name'],
+            'path':       node['path'],
+            'is_leaf':    False,
+            'children':   children,
+            'host_count': host_count,
+            'up_count':   up_count,
+            'down_count': host_count - up_count,
+        }
+
 
 # ---------------------------------------------------------------------------
 # Routes — Auth
@@ -590,6 +666,134 @@ def api_host_resume():
 def api_host_paused_list():
     paused = database.get_all_paused()
     return jsonify({'paused': list(paused)})
+
+
+# ---------------------------------------------------------------------------
+# Routes — Status Pages (admin CRUD)
+# ---------------------------------------------------------------------------
+
+@app.route('/api/status-pages', methods=['GET'])
+@login_required
+def api_list_status_pages():
+    return jsonify({'pages': database.get_status_pages()})
+
+
+@app.route('/api/status-pages', methods=['POST'])
+@login_required
+@csrf_required
+def api_create_status_page():
+    data = request.get_json(force=True) or {}
+    slug  = data.get('slug', '').strip().lower()
+    title = data.get('title', '').strip()
+    layout         = data.get('layout', 'banner-list')
+    included_pages = data.get('included_pages', [])
+    password       = data.get('password', '').strip()
+
+    if not slug or not title:
+        return jsonify({'error': 'slug and title are required'}), 400
+    if not re.match(r'^[a-z0-9-]+$', slug):
+        return jsonify({'error': 'slug must contain only lowercase letters, numbers, and hyphens'}), 400
+    if database.get_status_page(slug):
+        return jsonify({'error': f'Slug "{slug}" is already in use'}), 409
+
+    pw_hash = generate_password_hash(password) if password else None
+    database.create_status_page(slug, title, layout, included_pages, pw_hash)
+    return jsonify({'status': 'ok', 'slug': slug}), 201
+
+
+@app.route('/api/status-pages/<slug>', methods=['PUT'])
+@login_required
+@csrf_required
+def api_update_status_page(slug):
+    page = database.get_status_page(slug)
+    if not page:
+        return jsonify({'error': 'Not found'}), 404
+
+    data  = request.get_json(force=True) or {}
+    title          = data.get('title', page['title']).strip()
+    layout         = data.get('layout', page['layout'])
+    included_pages = data.get('included_pages', page['included_pages'])
+
+    # 'password' key present → update (empty string clears it); absent → keep existing hash
+    if 'password' in data:
+        pw = data['password'].strip()
+        pw_hash = generate_password_hash(pw) if pw else None
+    else:
+        pw_hash = page['password_hash']
+
+    database.update_status_page(slug, title, layout, included_pages, pw_hash)
+    return jsonify({'status': 'ok'})
+
+
+@app.route('/api/status-pages/<slug>', methods=['DELETE'])
+@login_required
+@csrf_required
+def api_delete_status_page(slug):
+    if not database.get_status_page(slug):
+        return jsonify({'error': 'Not found'}), 404
+    database.delete_status_page(slug)
+    return jsonify({'status': 'ok'})
+
+
+# ---------------------------------------------------------------------------
+# Routes — Status Pages (public)
+# ---------------------------------------------------------------------------
+
+@app.route('/status/<slug>', methods=['GET', 'POST'])
+def public_status_page(slug):
+    page = database.get_status_page(slug)
+    if not page:
+        return 'Status page not found', 404
+
+    if page['password_hash']:
+        session_key = f'sp_{slug}'
+        if request.method == 'POST':
+            if check_password_hash(page['password_hash'], request.form.get('password', '')):
+                session[session_key] = True
+                return redirect(f'/status/{slug}')
+            return render_template_string(STATUS_PASSWORD_HTML,
+                                          title=page['title'], error='Incorrect password')
+        if not session.get(session_key):
+            return render_template_string(STATUS_PASSWORD_HTML, title=page['title'], error=None)
+
+    return app.send_static_file('status_page.html')
+
+
+@app.route('/api/status-page/<slug>/data')
+def api_status_page_data(slug):
+    page = database.get_status_page(slug)
+    if not page:
+        return jsonify({'error': 'Not found'}), 404
+
+    # Password-protected pages require session auth (or admin session)
+    if page['password_hash']:
+        if not session.get(f'sp_{slug}') and not session.get('authenticated'):
+            return jsonify({'error': 'Unauthorized'}), 401
+
+    included = page['included_pages']   # list of top-level page paths
+    all_pages = tree_mgr.get_children('') or []
+    selected  = [p for p in all_pages if not included or p['path'] in included]
+
+    # Collect all leaves for a single batch DB query
+    all_leaves = []
+    for p in selected:
+        all_leaves.extend(tree_mgr.get_leaves_under(p['path']) or [])
+    leaf_paths   = [l['path'] for l in all_leaves]
+    latest_batch = database.get_latest_results_batch(leaf_paths)
+    paused_set   = database.get_all_paused()
+
+    groups = [_build_status_group(p, latest_batch, paused_set) for p in selected]
+
+    total = sum(g['host_count'] for g in groups)
+    up    = sum(g['up_count']   for g in groups)
+
+    return jsonify({
+        'title':   page['title'],
+        'layout':  page['layout'],
+        'groups':  groups,
+        'summary': {'total': total, 'up': up, 'down': total - up},
+        'now':     int(time.time()),
+    })
 
 
 # ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@
 SQLite database operations for uptime monitoring.
 """
 import hashlib
+import json
 import sqlite3
 import threading
 import time
@@ -81,6 +82,16 @@ def init_db():
                 timestamp  INTEGER NOT NULL,
                 is_up      INTEGER NOT NULL,
                 latency_ms REAL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS status_pages (
+                slug           TEXT PRIMARY KEY,
+                title          TEXT NOT NULL,
+                layout         TEXT NOT NULL DEFAULT 'banner-list',
+                included_pages TEXT NOT NULL DEFAULT '[]',
+                password_hash  TEXT,
+                created_at     INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
             )
         """)
         # Backfill latest_ping_results from ping_results if empty
@@ -410,3 +421,58 @@ def cleanup_old_records():
     cutoff = int(time.time()) - RETENTION_DAYS * 24 * 3600
     with get_conn() as conn:
         conn.execute("DELETE FROM ping_results WHERE timestamp < ?", (cutoff,))
+
+
+# ---------------------------------------------------------------------------
+# Status pages CRUD
+# ---------------------------------------------------------------------------
+
+def get_status_pages() -> list:
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT slug, title, layout, included_pages,
+                   password_hash IS NOT NULL AS has_password, created_at
+            FROM status_pages ORDER BY created_at
+        """).fetchall()
+    result = []
+    for row in rows:
+        d = dict(row)
+        d['included_pages'] = json.loads(d['included_pages'])
+        result.append(d)
+    return result
+
+
+def get_status_page(slug: str) -> dict:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT slug, title, layout, included_pages, password_hash, created_at FROM status_pages WHERE slug = ?",
+            (slug,)
+        ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    d['included_pages'] = json.loads(d['included_pages'])
+    return d
+
+
+def create_status_page(slug: str, title: str, layout: str,
+                        included_pages: list, password_hash: str = None):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO status_pages (slug, title, layout, included_pages, password_hash) VALUES (?, ?, ?, ?, ?)",
+            (slug, title, layout, json.dumps(included_pages), password_hash)
+        )
+
+
+def update_status_page(slug: str, title: str, layout: str,
+                        included_pages: list, password_hash):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE status_pages SET title=?, layout=?, included_pages=?, password_hash=? WHERE slug=?",
+            (title, layout, json.dumps(included_pages), password_hash, slug)
+        )
+
+
+def delete_status_page(slug: str):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM status_pages WHERE slug = ?", (slug,))

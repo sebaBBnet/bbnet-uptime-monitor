@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Status</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:      #0f1117;
+  --surface: #1a1f2e;
+  --surface2:#242938;
+  --border:  #2d3748;
+  --text:    #e2e8f0;
+  --muted:   #718096;
+  --green:   #48bb78;
+  --red:     #fc8181;
+  --yellow:  #ecc94b;
+}
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  min-height: 100vh;
+}
+
+/* Header */
+.header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 1.5rem;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky; top: 0; z-index: 100;
+}
+.header-brand { font-size: 1rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: .5rem; }
+.header-brand .sub { font-weight: 400; color: var(--muted); font-size: .85rem; }
+.header-meta { font-size: .75rem; color: var(--muted); }
+
+/* Main */
+.main { padding: 1.5rem; max-width: 900px; margin: 0 auto; }
+
+/* Banner */
+.banner {
+  display: flex; align-items: center; gap: .75rem;
+  padding: .9rem 1.25rem;
+  border-radius: 10px;
+  margin-bottom: 1.5rem;
+  font-size: .95rem; font-weight: 600;
+}
+.banner.ok   { background: rgba(72,187,120,.12); border: 1px solid rgba(72,187,120,.3); color: var(--green); }
+.banner.warn { background: rgba(252,129,129,.12); border: 1px solid rgba(252,129,129,.3); color: var(--red); }
+.banner-dot  { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+.banner.ok  .banner-dot { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.banner.warn .banner-dot { background: var(--red);   box-shadow: 0 0 8px var(--red); }
+
+/* Section group heading */
+.group-section { margin-bottom: 1.5rem; }
+.group-heading {
+  font-size: .72rem; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .07em;
+  margin-bottom: .5rem; padding-bottom: .4rem;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Component row (banner-list and grouped) */
+.component-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .6rem .75rem;
+  border-radius: 8px;
+  margin-bottom: 3px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.component-row:last-child { margin-bottom: 0; }
+.component-left { display: flex; align-items: center; gap: .65rem; }
+.c-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.c-dot.up     { background: var(--green); box-shadow: 0 0 5px var(--green); }
+.c-dot.down   { background: var(--red);   box-shadow: 0 0 5px var(--red); }
+.c-dot.warn   { background: var(--yellow); }
+.c-dot.none   { background: var(--muted); }
+.c-name { font-size: .875rem; font-weight: 500; color: var(--text); }
+.c-sub  { font-size: .72rem; color: var(--muted); margin-top: 1px; }
+.c-badge {
+  font-size: .72rem; font-weight: 600;
+  padding: .2rem .6rem; border-radius: 20px;
+}
+.c-badge.up   { background: rgba(72,187,120,.12);  color: var(--green); }
+.c-badge.down { background: rgba(252,129,129,.12); color: var(--red); }
+.c-badge.warn { background: rgba(236,201,75,.12);  color: var(--yellow); }
+.c-badge.none { background: var(--surface2); color: var(--muted); }
+
+/* Tile grid */
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: .75rem;
+  margin-bottom: 1.5rem;
+}
+.sp-tile {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: .9rem 1rem; position: relative; overflow: hidden;
+}
+.sp-tile::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; border-radius: 10px 10px 0 0;
+}
+.sp-tile.t-up::before   { background: var(--green); }
+.sp-tile.t-down::before { background: var(--red); }
+.sp-tile.t-warn::before { background: var(--yellow); }
+.sp-tile.t-none::before { background: var(--border); }
+.sp-tile-name { font-size: .9rem; font-weight: 600; color: #fff; margin-bottom: .3rem; }
+.sp-tile-sub  { font-size: .72rem; color: var(--muted); }
+
+/* Grouped (accordion) */
+details.group-acc { margin-bottom: .5rem; }
+details.group-acc > summary {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .7rem 1rem; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border);
+  cursor: pointer; list-style: none; user-select: none;
+}
+details.group-acc > summary::-webkit-details-marker { display: none; }
+details.group-acc[open] > summary { border-radius: 8px 8px 0 0; border-bottom-color: transparent; }
+.acc-left { display: flex; align-items: center; gap: .65rem; font-size: .9rem; font-weight: 500; }
+.acc-right { display: flex; align-items: center; gap: .75rem; font-size: .78rem; color: var(--muted); }
+.acc-chevron { transition: transform .2s; }
+details.group-acc[open] .acc-chevron { transform: rotate(180deg); }
+.acc-body {
+  border: 1px solid var(--border); border-top: none;
+  border-radius: 0 0 8px 8px; overflow: hidden;
+  padding: .4rem .5rem;
+  background: var(--surface);
+}
+.acc-body .component-row { background: var(--surface2); }
+
+/* Minimal list */
+.minimal-list { display: flex; flex-direction: column; gap: 4px; }
+.minimal-row  {
+  display: flex; align-items: center; gap: .65rem;
+  padding: .45rem .75rem; border-radius: 6px;
+  background: var(--surface); border: 1px solid var(--border);
+}
+.minimal-row .c-dot { width: 8px; height: 8px; }
+.m-name { font-size: .875rem; color: var(--text); }
+.m-right { margin-left: auto; font-size: .75rem; color: var(--muted); }
+
+/* Loading / error */
+.loading-wrap { display: flex; align-items: center; justify-content: center; min-height: 200px; }
+.spinner { width: 24px; height: 24px; border: 3px solid var(--border); border-top-color: var(--green);
+           border-radius: 50%; animation: spin .7s linear infinite; margin-right: .75rem; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.err-box { background: #742a2a; border: 1px solid #fc8181; border-radius: 8px;
+           padding: 1rem 1.25rem; color: #fed7d7; font-size: .875rem; margin-top: 1rem; }
+
+/* Footer */
+.footer { text-align: center; color: var(--muted); font-size: .72rem; padding: 2rem 0 1.5rem; border-top: 1px solid var(--border); margin-top: 2rem; }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-brand">
+    <span>📡</span>
+    <span id="pageTitle">Status</span>
+    <span class="sub" id="pageSubtitle"></span>
+  </div>
+  <div class="header-meta" id="lastUpdated"></div>
+</header>
+
+<main class="main">
+  <div id="banner"></div>
+  <div id="content">
+    <div class="loading-wrap"><div class="spinner"></div> Loading…</div>
+  </div>
+</main>
+
+<footer class="footer">
+  Powered by BBnet Uptime Monitor &nbsp;·&nbsp; Auto-refreshes every 60 seconds
+</footer>
+
+<script>
+const slug = (window.location.pathname.match(/\/status\/([^/]+)/) || [])[1] || '';
+
+// ---- Status helpers ----
+
+function groupStatus(g) {
+  if (!g.host_count) return 'none';
+  if (g.down_count > 0 && g.up_count === 0) return 'down';
+  if (g.down_count > 0) return 'warn';
+  return 'up';
+}
+
+function leafStatus(leaf) {
+  if (leaf.is_paused) return 'none';
+  if (leaf.is_up === true)  return 'up';
+  if (leaf.is_up === false) return 'down';
+  return 'none';
+}
+
+function nodeStatus(node) {
+  return node.is_leaf ? leafStatus(node) : groupStatus(node);
+}
+
+function statusLabel(st) {
+  return { up: 'Operational', down: 'Down', warn: 'Degraded', none: 'No data' }[st] || 'Unknown';
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function fmtCount(g) {
+  if (!g.host_count) return '';
+  if (g.down_count === 0) return `${g.host_count} / ${g.host_count} operational`;
+  return `${g.up_count} / ${g.host_count} operational`;
+}
+
+// ---- Component row ----
+function componentRow(node) {
+  const st   = nodeStatus(node);
+  const sub  = node.is_leaf ? '' : fmtCount(node);
+  return `<div class="component-row">
+    <div class="component-left">
+      <div class="c-dot ${st}"></div>
+      <div>
+        <div class="c-name">${esc(node.name)}</div>
+        ${sub ? `<div class="c-sub">${esc(sub)}</div>` : ''}
+      </div>
+    </div>
+    <span class="c-badge ${st}">${statusLabel(st)}</span>
+  </div>`;
+}
+
+// ---- Tile ----
+function spTile(node) {
+  const st  = nodeStatus(node);
+  const sub = node.is_leaf
+    ? (node.latency_ms != null ? node.latency_ms.toFixed(1) + ' ms' : '')
+    : fmtCount(node);
+  return `<div class="sp-tile t-${st}">
+    <div class="sp-tile-name">${esc(node.name)}</div>
+    ${sub ? `<div class="sp-tile-sub">${esc(sub)}</div>` : ''}
+  </div>`;
+}
+
+// ---- Layouts ----
+
+function renderBannerList(data) {
+  return data.groups.map(group => {
+    const rows = (group.children || []).map(componentRow).join('');
+    return `<div class="group-section">
+      <div class="group-heading">${esc(group.name)}</div>
+      ${rows || '<div class="component-row"><span style="color:var(--muted);font-size:.82rem">No hosts</span></div>'}
+    </div>`;
+  }).join('');
+}
+
+function renderTileGrid(data) {
+  return data.groups.map(group => {
+    const tiles = (group.children || []).map(spTile).join('');
+    return `<div class="group-section">
+      <div class="group-heading">${esc(group.name)}</div>
+      <div class="tile-grid">${tiles}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderGrouped(data) {
+  return data.groups.map(group => {
+    const st    = groupStatus(group);
+    const inner = (group.children || []).map(componentRow).join('');
+    return `<details class="group-acc">
+      <summary>
+        <div class="acc-left">
+          <div class="c-dot ${st}"></div>
+          ${esc(group.name)}
+        </div>
+        <div class="acc-right">
+          <span>${esc(fmtCount(group))}</span>
+          <span class="acc-chevron">▾</span>
+        </div>
+      </summary>
+      <div class="acc-body">
+        ${inner || '<div style="padding:.4rem .25rem;color:var(--muted);font-size:.82rem">No hosts</div>'}
+      </div>
+    </details>`;
+  }).join('');
+}
+
+function renderMinimal(data) {
+  const allNodes = data.groups.flatMap(g => g.children || []);
+  const rows = allNodes.map(node => {
+    const st = nodeStatus(node);
+    const right = node.is_leaf
+      ? (node.latency_ms != null ? node.latency_ms.toFixed(1) + ' ms' : '')
+      : fmtCount(node);
+    return `<div class="minimal-row">
+      <div class="c-dot ${st}"></div>
+      <span class="m-name">${esc(node.name)}</span>
+      ${right ? `<span class="m-right">${esc(right)}</span>` : ''}
+    </div>`;
+  });
+  return `<div class="minimal-list">${rows.join('')}</div>`;
+}
+
+// ---- Banner ----
+function renderBanner(summary) {
+  const allOk = summary.down === 0;
+  const cls   = allOk ? 'ok' : 'warn';
+  const msg   = allOk
+    ? 'All systems operational'
+    : `${summary.down} ${summary.down === 1 ? 'system' : 'systems'} experiencing issues`;
+  document.getElementById('banner').innerHTML = `
+    <div class="banner ${cls}">
+      <div class="banner-dot"></div>
+      ${esc(msg)}
+    </div>`;
+}
+
+// ---- Main ----
+async function load() {
+  try {
+    const r = await fetch(`/api/status-page/${encodeURIComponent(slug)}/data`);
+    if (r.status === 401) { showErr('Access denied. Please reload the page.'); return; }
+    if (!r.ok) { showErr('Status page not found.'); return; }
+    const data = await r.json();
+
+    document.title = data.title + ' — Status';
+    document.getElementById('pageTitle').textContent = data.title;
+
+    const total = data.summary.total;
+    document.getElementById('pageSubtitle').textContent =
+      total ? `${total} ${total === 1 ? 'host' : 'hosts'}` : '';
+
+    renderBanner(data.summary);
+
+    const el = document.getElementById('content');
+    switch (data.layout) {
+      case 'tile-grid': el.innerHTML = renderTileGrid(data);    break;
+      case 'grouped':   el.innerHTML = renderGrouped(data);     break;
+      case 'minimal':   el.innerHTML = renderMinimal(data);     break;
+      default:          el.innerHTML = renderBannerList(data);
+    }
+
+    document.getElementById('lastUpdated').textContent =
+      'Updated ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    showErr('Failed to load status data: ' + e.message);
+  }
+}
+
+function showErr(msg) {
+  document.getElementById('content').innerHTML = `<div class="err-box">${esc(msg)}</div>`;
+}
+
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>
