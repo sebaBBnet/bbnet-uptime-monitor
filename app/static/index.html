@@ -737,6 +737,7 @@ canvas#latencyCanvas {
       <div class="st-tree-actions">
         <button type="button" class="btn" onclick="stSelectAll(true)">Select all</button>
         <button type="button" class="btn" onclick="stSelectAll(false)">Clear all</button>
+        <button type="button" class="btn" onclick="stCollapseAll()">Collapse all</button>
       </div>
       <div class="sel-tree-wrap" id="selTreeContainer">
         <div style="color:var(--muted);font-size:.8rem;padding:.25rem">Loading…</div>
@@ -1895,6 +1896,11 @@ function stSelectAll(checked) {
   document.querySelectorAll('#selTreeContainer .st-cb').forEach(cb => {
     cb.checked = checked; cb.indeterminate = false;
   });
+}
+
+function stCollapseAll() {
+  document.querySelectorAll('#selTreeContainer .st-children').forEach(el => el.classList.add('hidden'));
+  document.querySelectorAll('#selTreeContainer .st-toggle').forEach(el => el.classList.remove('open'));
 }
 
 function spAutoSlug() {
