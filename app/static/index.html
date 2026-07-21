@@ -1634,7 +1634,8 @@ function renderSpList(pages) {
           <span class="sp-badge lay">${esc(LAYOUT_LABELS[p.layout] || p.layout)}</span>
         </div>
         <div class="sp-actions">
-          <button class="btn" onclick="copySpUrl('${esc(p.slug)}')" title="Copy URL">Copy URL</button>
+          <a class="btn" href="/status/${esc(p.slug)}" target="_blank" rel="noopener">Preview ↗</a>
+          <button class="btn" onclick="copySpUrl('${esc(p.slug)}')">Copy URL</button>
           <button class="btn" onclick="openSpEdit('${esc(p.slug)}')">Edit</button>
           <button class="btn btn-danger" onclick="deleteStatusPage('${esc(p.slug)}', '${esc(p.title)}')">Delete</button>
         </div>
@@ -1644,7 +1645,28 @@ function renderSpList(pages) {
 
 function copySpUrl(slug) {
   const url = window.location.origin + '/status/' + slug;
-  navigator.clipboard.writeText(url).then(() => toast('URL copied to clipboard', 'ok'));
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(url)
+      .then(() => toast('URL copied', 'ok'))
+      .catch(() => _fallbackCopy(url));
+  } else {
+    _fallbackCopy(url);
+  }
+}
+
+function _fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand('copy');
+    toast('URL copied', 'ok');
+  } catch (_) {
+    toast('Copy failed — URL: ' + text, 'err');
+  }
+  document.body.removeChild(ta);
 }
 
 async function openSpModal() {
