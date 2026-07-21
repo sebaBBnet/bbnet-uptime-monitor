@@ -65,6 +65,20 @@ body {
   margin-bottom: .5rem; padding-bottom: .4rem;
   border-bottom: 1px solid var(--border);
 }
+.group-subheading {
+  font-size: .68rem; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .06em;
+  margin: .9rem 0 .3rem .5rem; padding-bottom: .3rem;
+  border-bottom: 1px dashed var(--border); opacity: .75;
+}
+.group-indent { padding-left: .75rem; }
+/* Full-width subheading row inside tile grid */
+.tile-subheading {
+  grid-column: 1 / -1;
+  font-size: .68rem; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .06em;
+  padding: .4rem .1rem .2rem; border-bottom: 1px dashed var(--border); opacity: .75;
+}
 
 /* Component row (banner-list and grouped) */
 .component-row {
@@ -248,55 +262,83 @@ function spTile(node) {
 
 // ---- Layouts ----
 
+// -- Banner list (recursive) --
 function renderBannerList(data) {
-  return data.groups.map(group => {
-    const rows = (group.children || []).map(componentRow).join('');
-    return `<div class="group-section">
-      <div class="group-heading">${esc(group.name)}</div>
-      ${rows || '<div class="component-row"><span style="color:var(--muted);font-size:.82rem">No hosts</span></div>'}
-    </div>`;
-  }).join('');
+  return data.groups.map(g => _bannerGroup(g, 0)).join('');
 }
 
+function _bannerGroup(group, depth) {
+  if (group.is_leaf) return componentRow(group);
+  const headingCls = depth === 0 ? 'group-heading' : 'group-subheading';
+  const indent     = depth > 0 ? ' group-indent' : '';
+  const children   = (group.children || []).map(c => _bannerGroup(c, depth + 1)).join('');
+  return `<div class="group-section">
+    <div class="${headingCls}">${esc(group.name)}</div>
+    <div class="${indent}">
+      ${children || '<div class="component-row"><span style="color:var(--muted);font-size:.82rem">No hosts</span></div>'}
+    </div>
+  </div>`;
+}
+
+// -- Tile grid (recursive) --
 function renderTileGrid(data) {
-  return data.groups.map(group => {
-    const tiles = (group.children || []).map(spTile).join('');
+  return data.groups.map(g => {
     return `<div class="group-section">
-      <div class="group-heading">${esc(group.name)}</div>
-      <div class="tile-grid">${tiles}</div>
+      <div class="group-heading">${esc(g.name)}</div>
+      <div class="tile-grid">${_tileChildren(g.children || [], 0)}</div>
     </div>`;
   }).join('');
 }
 
-function renderGrouped(data) {
-  return data.groups.map(group => {
-    const st    = groupStatus(group);
-    const inner = (group.children || []).map(componentRow).join('');
-    return `<details class="group-acc">
-      <summary>
-        <div class="acc-left">
-          <div class="c-dot ${st}"></div>
-          ${esc(group.name)}
-        </div>
-        <div class="acc-right">
-          <span>${esc(fmtCount(group))}</span>
-          <span class="acc-chevron">▾</span>
-        </div>
-      </summary>
-      <div class="acc-body">
-        ${inner || '<div style="padding:.4rem .25rem;color:var(--muted);font-size:.82rem">No hosts</div>'}
-      </div>
-    </details>`;
+function _tileChildren(children, depth) {
+  return children.map(node => {
+    if (node.is_leaf) return spTile(node);
+    // Sub-group: emit a full-width label then its children's tiles
+    return `<div class="tile-subheading">${esc(node.name)}</div>
+      ${_tileChildren(node.children || [], depth + 1)}`;
   }).join('');
 }
 
+// -- Grouped / accordion (recursive) --
+function renderGrouped(data) {
+  return data.groups.map(g => _accordion(g, true)).join('');
+}
+
+function _accordion(group, openByDefault) {
+  if (group.is_leaf) return componentRow(group);
+  const st    = groupStatus(group);
+  const inner = (group.children || []).map(c =>
+    c.is_leaf ? componentRow(c) : _accordion(c, false)
+  ).join('');
+  return `<details class="group-acc"${openByDefault ? ' open' : ''}>
+    <summary>
+      <div class="acc-left">
+        <div class="c-dot ${st}"></div>
+        ${esc(group.name)}
+      </div>
+      <div class="acc-right">
+        <span>${esc(fmtCount(group))}</span>
+        <span class="acc-chevron">▾</span>
+      </div>
+    </summary>
+    <div class="acc-body">
+      ${inner || '<div style="padding:.4rem .25rem;color:var(--muted);font-size:.82rem">No hosts</div>'}
+    </div>
+  </details>`;
+}
+
+// -- Minimal (flatten all leaves recursively) --
 function renderMinimal(data) {
-  const allNodes = data.groups.flatMap(g => g.children || []);
-  const rows = allNodes.map(node => {
-    const st = nodeStatus(node);
-    const right = node.is_leaf
-      ? (node.latency_ms != null ? node.latency_ms.toFixed(1) + ' ms' : '')
-      : fmtCount(node);
+  const leaves = [];
+  function collect(node) {
+    if (node.is_leaf) leaves.push(node);
+    else (node.children || []).forEach(collect);
+  }
+  data.groups.forEach(collect);
+
+  const rows = leaves.map(node => {
+    const st    = leafStatus(node);
+    const right = node.latency_ms != null ? node.latency_ms.toFixed(1) + ' ms' : '';
     return `<div class="minimal-row">
       <div class="c-dot ${st}"></div>
       <span class="m-name">${esc(node.name)}</span>
