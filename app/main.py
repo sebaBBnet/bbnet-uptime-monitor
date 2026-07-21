@@ -858,8 +858,13 @@ def api_kuma_test():
     if kuma_poller is None:
         return jsonify({'error': 'Kuma integration not configured — add kuma_url and kuma_api_key to config.yml'}), 503
     try:
-        data = kuma_poller.fetch_raw()
-        return jsonify({'ok': True, 'data': data})
+        status_code, body_text, data = kuma_poller.fetch_raw_debug()
+        return jsonify({
+            'ok':          data is not None,
+            'http_status': status_code,
+            'body_preview': body_text[:500] if body_text else '',
+            'data':        data,
+        })
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 502
 

@@ -29,6 +29,7 @@ class KumaPoller:
         self._session = requests.Session()
         self._session.headers.update({
             'Authorization': f'Bearer {api_key}',
+            'X-API-Key':     api_key,       # Kuma 2.x alternative header
             'Accept':        'application/json',
         })
 
@@ -123,10 +124,20 @@ class KumaPoller:
     # -----------------------------------------------------------------------
 
     def fetch_raw(self) -> dict:
-        """Return the raw /api/monitors response — used by /api/kuma-test."""
+        """Return the raw /api/monitors response — used internally."""
         resp = self._session.get(f"{self.url}/api/monitors", timeout=15)
         resp.raise_for_status()
         return resp.json()
+
+    def fetch_raw_debug(self) -> tuple:
+        """Return (http_status, body_text, parsed_json_or_None) for the diagnostic endpoint."""
+        resp = self._session.get(f"{self.url}/api/monitors", timeout=15)
+        body = resp.text
+        try:
+            data = resp.json()
+        except Exception:
+            data = None
+        return resp.status_code, body, data
 
 
 # ---------------------------------------------------------------------------
