@@ -526,13 +526,26 @@ canvas#latencyCanvas {
 }
 .layout-opt:hover { border-color: #4a5568; }
 .layout-opt.sel { border-color: var(--blue); color: var(--blue); background: rgba(66,153,225,.08); }
-.pages-picker {
+/* Selection tree */
+.sel-tree-wrap {
   border: 1px solid var(--border); border-radius: 8px;
-  padding: .5rem; max-height: 160px; overflow-y: auto; background: var(--bg);
+  padding: .4rem .5rem; max-height: 240px; overflow-y: auto; background: var(--bg);
 }
-.page-chk { display: flex; align-items: center; gap: .6rem; padding: .3rem .25rem; cursor: pointer; }
-.page-chk input { cursor: pointer; }
-.page-chk span { font-size: .85rem; color: var(--text); }
+.st-tree-actions { display: flex; gap: .4rem; margin-bottom: .35rem; }
+.st-tree-actions .btn { font-size: .72rem; padding: .15rem .55rem; }
+.st-item { margin: 0; }
+.st-row { display: flex; align-items: center; gap: .3rem; padding: .18rem .1rem; border-radius: 4px; }
+.st-row:hover { background: var(--surface2); }
+.st-toggle { width: 14px; font-size: .6rem; cursor: pointer; display: inline-flex; align-items: center;
+             justify-content: center; color: var(--muted); transition: transform .15s; user-select: none; flex-shrink: 0; }
+.st-toggle.open { transform: rotate(90deg); }
+.st-spacer { width: 14px; flex-shrink: 0; }
+.st-cb { cursor: pointer; flex-shrink: 0; accent-color: var(--blue); }
+.st-label { font-size: .83rem; color: var(--text); cursor: pointer; flex: 1; white-space: nowrap;
+            overflow: hidden; text-overflow: ellipsis; }
+.st-count { font-size: .68rem; color: var(--muted); white-space: nowrap; padding-left: .2rem; }
+.st-children { padding-left: 18px; }
+.st-children.hidden { display: none; }
 .url-preview {
   font-size: .75rem; font-family: 'Consolas', monospace;
   color: var(--muted); background: var(--surface2); border: 1px solid var(--border);
@@ -720,11 +733,15 @@ canvas#latencyCanvas {
     </div>
 
     <div class="form-group">
-      <label class="form-label">Include pages</label>
-      <div class="pages-picker" id="spPagesPicker">
+      <label class="form-label">Include hosts</label>
+      <div class="st-tree-actions">
+        <button type="button" class="btn" onclick="stSelectAll(true)">Select all</button>
+        <button type="button" class="btn" onclick="stSelectAll(false)">Clear all</button>
+      </div>
+      <div class="sel-tree-wrap" id="selTreeContainer">
         <div style="color:var(--muted);font-size:.8rem;padding:.25rem">Loading…</div>
       </div>
-      <div class="form-hint">Leave all unchecked to include all pages.</div>
+      <div class="form-hint">Leave all unchecked to include the entire tree.</div>
     </div>
 
     <div class="form-group">
@@ -1563,7 +1580,7 @@ async function reloadHosts() {
     const r = await fetch('/api/reload', { method: 'POST', headers: { 'X-CSRF-Token': csrfToken } });
     const d = await r.json();
     toast(d.message, r.ok ? 'ok' : 'err');
-    if (r.ok) handleRefresh();
+    if (r.ok) { selTreeCache = null; handleRefresh(); }
   } catch (e) { toast('Reload failed', 'err'); }
 }
 
@@ -1581,8 +1598,8 @@ function showOutages() {
 // ============================================================
 // Status pages management
 // ============================================================
-let spEditSlug     = null;   // null = creating; string = editing
-let spAvailPages   = [];     // top-level pages from tree
+let spEditSlug       = null;   // null = creating; string = editing
+let selTreeCache     = null;   // cached /api/tree response (invalidated on reloadHosts)
 let spSelectedLayout = 'banner-list';
 
 const LAYOUT_LABELS = {
@@ -1680,7 +1697,7 @@ async function openSpModal() {
   spSelectedLayout = 'banner-list';
   spUpdatePreview();
   spSelectLayoutByKey('banner-list');
-  await loadSpPages([]);
+  await loadSelTree([]);
   document.getElementById('spModal').style.display = 'flex';
   document.getElementById('spTitle').focus();
 }
@@ -1704,7 +1721,7 @@ async function openSpEdit(slug) {
     spSelectedLayout = page.layout || 'banner-list';
     spSelectLayoutByKey(spSelectedLayout);
     spUpdatePreview();
-    await loadSpPages(page.included_pages || []);
+    await loadSelTree(page.included_pages || []);
     document.getElementById('spModal').style.display = 'flex';
     document.getElementById('spTitle').focus();
   } catch (e) { toast('Failed to load page', 'err'); }
@@ -1715,30 +1732,169 @@ function closeSpModal() {
 }
 document.getElementById('spModal').addEventListener('click', closeSpModal);
 
-async function loadSpPages(selected) {
-  const picker = document.getElementById('spPagesPicker');
+// ============================================================
+// Selection tree
+// ============================================================
+
+async function loadSelTree(selectedPaths) {
+  const container = document.getElementById('selTreeContainer');
+  container.innerHTML = '<div style="color:var(--muted);font-size:.8rem;padding:.25rem">Loading…</div>';
   try {
-    if (!spAvailPages.length) {
-      const r = await fetch('/api/node?path=');
-      if (r.ok) {
-        const d = await r.json();
-        spAvailPages = (d.items || []).filter(i => !i.is_leaf);
-      }
+    if (!selTreeCache) {
+      const r = await fetch('/api/tree');
+      if (!r.ok) throw new Error('fetch failed');
+      const d = await r.json();
+      selTreeCache = d.tree || [];
     }
-    if (!spAvailPages.length) {
-      picker.innerHTML = '<div style="color:var(--muted);font-size:.8rem;padding:.25rem">No pages found</div>';
+    if (!selTreeCache.length) {
+      container.innerHTML = '<div style="color:var(--muted);font-size:.8rem;padding:.25rem">No hosts found</div>';
       return;
     }
-    picker.innerHTML = spAvailPages.map(p => {
-      const checked = selected.includes(p.path) ? 'checked' : '';
-      return `<label class="page-chk">
-        <input type="checkbox" value="${esc(p.path)}" ${checked}>
-        <span>${esc(p.name)}</span>
-      </label>`;
-    }).join('');
+    container.innerHTML = renderSelTree(selTreeCache, 0);
+    setSelTreeFromPaths(selectedPaths || []);
   } catch (e) {
-    picker.innerHTML = '<div style="color:var(--muted);font-size:.8rem;padding:.25rem">Failed to load pages</div>';
+    container.innerHTML = '<div style="color:var(--muted);font-size:.8rem;padding:.25rem">Failed to load tree</div>';
   }
+}
+
+function renderSelTree(nodes, depth) {
+  if (!nodes || !nodes.length) return '';
+  return nodes.map(node => {
+    const hasKids  = !node.is_leaf && node.children && node.children.length > 0;
+    const startOpen = depth === 0;
+    const leafCount = hasKids ? stCountLeaves(node) : 0;
+    const pth = node.path.replace(/'/g, "\\'");
+    return `<div class="st-item">
+      <div class="st-row">
+        ${hasKids
+          ? `<span class="st-toggle${startOpen ? ' open' : ''}" onclick="stToggle(event,'${pth}')" title="Expand/collapse">▶</span>`
+          : '<span class="st-spacer"></span>'}
+        <input type="checkbox" class="st-cb" data-path="${esc(node.path)}" data-leaf="${node.is_leaf ? 1 : 0}"
+          onclick="stCheck(event,'${pth}')">
+        <span class="st-label" onclick="stLabelClick(event,'${pth}')">${esc(node.name)}</span>
+        ${hasKids ? `<span class="st-count">${leafCount} host${leafCount !== 1 ? 's' : ''}</span>` : ''}
+      </div>
+      ${hasKids ? `<div class="st-children${startOpen ? '' : ' hidden'}" data-parent="${esc(node.path)}">
+        ${renderSelTree(node.children, depth + 1)}
+      </div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function stCountLeaves(node) {
+  if (node.is_leaf) return 1;
+  return (node.children || []).reduce((s, c) => s + stCountLeaves(c), 0);
+}
+
+function stToggle(e, path) {
+  e.stopPropagation();
+  const kids = document.querySelector(`#selTreeContainer .st-children[data-parent="${CSS.escape(path)}"]`);
+  if (!kids) return;
+  const nowHidden = kids.classList.toggle('hidden');
+  e.currentTarget.classList.toggle('open', !nowHidden);
+}
+
+function stCheck(e, path) {
+  e.stopPropagation();
+  const cb = document.querySelector(`#selTreeContainer .st-cb[data-path="${CSS.escape(path)}"]`);
+  if (!cb) return;
+  const checked = cb.checked;
+  cb.indeterminate = false;
+  // Cascade to all descendants
+  const kids = document.querySelector(`#selTreeContainer .st-children[data-parent="${CSS.escape(path)}"]`);
+  if (kids) {
+    kids.querySelectorAll('.st-cb').forEach(c => { c.checked = checked; c.indeterminate = false; });
+  }
+  stUpdateAncestors(path);
+}
+
+function stLabelClick(e, path) {
+  e.stopPropagation();
+  const cb = document.querySelector(`#selTreeContainer .st-cb[data-path="${CSS.escape(path)}"]`);
+  if (!cb) return;
+  cb.checked = !cb.checked;
+  stCheck(e, path);
+}
+
+function stUpdateAncestors(path) {
+  const parts = path.split('/');
+  for (let i = parts.length - 1; i > 0; i--) {
+    const parentPath = parts.slice(0, i).join('/');
+    const parentCb = document.querySelector(`#selTreeContainer .st-cb[data-path="${CSS.escape(parentPath)}"]`);
+    if (!parentCb) continue;
+    const directCbs = Array.from(document.querySelectorAll(
+      `#selTreeContainer .st-children[data-parent="${CSS.escape(parentPath)}"] > .st-item > .st-row > .st-cb`
+    ));
+    if (!directCbs.length) continue;
+    const total   = directCbs.length;
+    const checked = directCbs.filter(c => c.checked && !c.indeterminate).length;
+    const indet   = directCbs.filter(c => c.indeterminate).length;
+    if (checked === total && indet === 0) {
+      parentCb.checked = true;  parentCb.indeterminate = false;
+    } else if (checked === 0 && indet === 0) {
+      parentCb.checked = false; parentCb.indeterminate = false;
+    } else {
+      parentCb.checked = false; parentCb.indeterminate = true;
+    }
+  }
+}
+
+function setSelTreeFromPaths(selectedPaths) {
+  // Reset all
+  document.querySelectorAll('#selTreeContainer .st-cb').forEach(cb => {
+    cb.checked = false; cb.indeterminate = false;
+  });
+  if (!selectedPaths || !selectedPaths.length) return;
+
+  // Check selected paths and all their descendants
+  for (const path of selectedPaths) {
+    const cb = document.querySelector(`#selTreeContainer .st-cb[data-path="${CSS.escape(path)}"]`);
+    if (!cb) continue;
+    cb.checked = true; cb.indeterminate = false;
+    const kids = document.querySelector(`#selTreeContainer .st-children[data-parent="${CSS.escape(path)}"]`);
+    if (kids) kids.querySelectorAll('.st-cb').forEach(c => { c.checked = true; c.indeterminate = false; });
+  }
+
+  // Update group checkboxes from deepest to shallowest
+  const groupCbs = Array.from(document.querySelectorAll('#selTreeContainer .st-cb[data-leaf="0"]'));
+  groupCbs.sort((a, b) => b.dataset.path.split('/').length - a.dataset.path.split('/').length);
+  for (const cb of groupCbs) {
+    const directCbs = Array.from(document.querySelectorAll(
+      `#selTreeContainer .st-children[data-parent="${CSS.escape(cb.dataset.path)}"] > .st-item > .st-row > .st-cb`
+    ));
+    if (!directCbs.length) continue;
+    const total   = directCbs.length;
+    const checked = directCbs.filter(c => c.checked && !c.indeterminate).length;
+    const indet   = directCbs.filter(c => c.indeterminate).length;
+    if (checked === total && indet === 0) {
+      cb.checked = true;  cb.indeterminate = false;
+    } else if (checked === 0 && indet === 0) {
+      cb.checked = false; cb.indeterminate = false;
+    } else {
+      cb.checked = false; cb.indeterminate = true;
+    }
+  }
+}
+
+function stGetSelected() {
+  // Return minimal set: checked (not indeterminate) paths that are not
+  // descendants of another checked path
+  const allChecked = Array.from(document.querySelectorAll('#selTreeContainer .st-cb'))
+    .filter(cb => cb.checked && !cb.indeterminate)
+    .map(cb => cb.dataset.path);
+  return allChecked.filter(p => {
+    const parts = p.split('/');
+    for (let i = 1; i < parts.length; i++) {
+      if (allChecked.includes(parts.slice(0, i).join('/'))) return false;
+    }
+    return true;
+  });
+}
+
+function stSelectAll(checked) {
+  document.querySelectorAll('#selTreeContainer .st-cb').forEach(cb => {
+    cb.checked = checked; cb.indeterminate = false;
+  });
 }
 
 function spAutoSlug() {
@@ -1766,15 +1922,11 @@ function spSelectLayoutByKey(key) {
   });
 }
 
-function spGetSelectedPages() {
-  return Array.from(document.querySelectorAll('#spPagesPicker input:checked')).map(i => i.value);
-}
-
 async function saveStatusPage() {
   const title    = document.getElementById('spTitle').value.trim();
   const slug     = document.getElementById('spSlug').value.trim().toLowerCase();
   const password = document.getElementById('spPassword').value;
-  const included = spGetSelectedPages();
+  const included = stGetSelected();
 
   if (!title)                             { toast('Title is required', 'err'); return; }
   if (!slug)                              { toast('Slug is required', 'err'); return; }

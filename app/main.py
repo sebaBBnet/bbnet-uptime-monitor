@@ -284,6 +284,46 @@ def _build_status_group(node: dict, latest_batch: dict, paused_set: set) -> dict
         }
 
 
+def _node_included(path: str, included: list) -> str:
+    """Return 'full', 'partial', or 'none' for `path` given a list of selected paths."""
+    if not included:
+        return 'full'
+    for sel in included:
+        if path == sel or path.startswith(sel + '/'):
+            return 'full'
+        if sel.startswith(path + '/'):
+            return 'partial'
+    return 'none'
+
+
+def _build_status_group_filtered(node: dict, latest_batch: dict, paused_set: set, included: list) -> dict:
+    """Like _build_status_group but restricts to paths in `included` (at any depth)."""
+    inclusion = _node_included(node['path'], included)
+    if inclusion == 'none':
+        return None
+    if inclusion == 'full' or node.get('host'):
+        return _build_status_group(node, latest_batch, paused_set)
+    # Partial match: recurse into children and filter
+    children = [
+        _build_status_group_filtered(c, latest_batch, paused_set, included)
+        for c in node.get('children', [])
+    ]
+    children = [c for c in children if c]
+    if not children:
+        return None
+    hc = sum(c['host_count'] for c in children)
+    uc = sum(c['up_count']   for c in children)
+    return {
+        'name':       node['name'],
+        'path':       node['path'],
+        'is_leaf':    False,
+        'children':   children,
+        'host_count': hc,
+        'up_count':   uc,
+        'down_count': hc - uc,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Routes — Auth
 # ---------------------------------------------------------------------------
@@ -770,19 +810,30 @@ def api_status_page_data(slug):
         if not session.get(f'sp_{slug}') and not session.get('authenticated'):
             return jsonify({'error': 'Unauthorized'}), 401
 
-    included = page['included_pages']   # list of top-level page paths
+    included  = page['included_pages']   # list of paths at any depth
     all_pages = tree_mgr.get_children('') or []
-    selected  = [p for p in all_pages if not included or p['path'] in included]
 
-    # Collect all leaves for a single batch DB query
+    # Determine which top-level pages have any selected descendant-or-self
+    walk_from = all_pages if not included else [
+        p for p in all_pages if _node_included(p['path'], included) != 'none'
+    ]
+
+    # Collect leaves for a single batch DB query
     all_leaves = []
-    for p in selected:
+    for p in walk_from:
         all_leaves.extend(tree_mgr.get_leaves_under(p['path']) or [])
     leaf_paths   = [l['path'] for l in all_leaves]
     latest_batch = database.get_latest_results_batch(leaf_paths)
     paused_set   = database.get_all_paused()
 
-    groups = [_build_status_group(p, latest_batch, paused_set) for p in selected]
+    if not included:
+        groups = [_build_status_group(p, latest_batch, paused_set) for p in all_pages]
+    else:
+        groups = [
+            _build_status_group_filtered(p, latest_batch, paused_set, included)
+            for p in walk_from
+        ]
+        groups = [g for g in groups if g]
 
     total = sum(g['host_count'] for g in groups)
     up    = sum(g['up_count']   for g in groups)
@@ -794,6 +845,20 @@ def api_status_page_data(slug):
         'summary': {'total': total, 'up': up, 'down': total - up},
         'now':     int(time.time()),
     })
+
+
+@app.route('/api/tree')
+@login_required
+def api_tree():
+    """Return a simplified host tree for the status page host selector."""
+    def simplify(node):
+        if node.get('host'):
+            return {'name': node['name'], 'path': node['path'], 'is_leaf': True}
+        kids = [simplify(c) for c in node.get('children', [])]
+        return {'name': node['name'], 'path': node['path'], 'is_leaf': False, 'children': kids}
+
+    pages = tree_mgr.get_children('') or []
+    return jsonify({'tree': [simplify(p) for p in pages]})
 
 
 # ---------------------------------------------------------------------------
