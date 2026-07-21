@@ -148,9 +148,13 @@ def _parse_file(filepath: Path, default_interval: int) -> list:
         if m:
             hostname = m.group(1)
             flags    = _parse_flags(m.group(2))
-            kuma_id_str = flags.get('kuma-id')
+            kuma_id_str  = flags.get('kuma-id')
+            kuma_slug    = flags.get('kuma-slug')
             if not kuma_id_str or not kuma_id_str.isdigit():
                 print(f"[tree] WARNING: kuma host '{hostname}' has no valid kuma-id — skipping")
+                continue
+            if not kuma_slug:
+                print(f"[tree] WARNING: kuma host '{hostname}' has no kuma-slug — skipping")
                 continue
             parent = current_subsubpage if current_subsubpage is not None \
                 else current_subpage if current_subpage is not None \
@@ -161,7 +165,7 @@ def _parse_file(filepath: Path, default_interval: int) -> list:
             candidate = f"{parent['path']}/{host_slug}"
             path = _unique_path(parent, candidate)
             node = _make_node(hostname, host_slug, path, 'kuma', default_interval,
-                              kuma_id=int(kuma_id_str))
+                              kuma_id=int(kuma_id_str), kuma_slug=kuma_slug)
             parent['children'].append(node)
             continue
 
@@ -190,15 +194,16 @@ def _parse_file(filepath: Path, default_interval: int) -> list:
 
 
 def _make_node(name: str, slug: str, path: str, host, interval: int,
-               kuma_id: int = None) -> dict:
+               kuma_id: int = None, kuma_slug: str = None) -> dict:
     return {
         'name':         name,
         'slug':         slug,
         'path':         path,
-        'host':         host,       # IP string | 'kuma' | None (groups)
+        'host':         host,        # IP string | 'kuma' | None (groups)
         'ping_interval': interval,
         'children':     [],
-        'kuma_id':      kuma_id,    # int if this is a Kuma monitor, else None
+        'kuma_id':      kuma_id,     # int if this is a Kuma monitor, else None
+        'kuma_slug':    kuma_slug,   # Kuma status page slug, e.g. 'bbnet-status'
     }
 
 

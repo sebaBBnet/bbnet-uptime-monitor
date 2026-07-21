@@ -38,10 +38,9 @@ tree_mgr.load_tree()
 alerter.init(config)
 
 # Start Kuma poller (if configured)
-if config.get('kuma_url') and config.get('kuma_api_key'):
+if config.get('kuma_url'):
     main_module.kuma_poller = kuma_module.KumaPoller(
         url=config['kuma_url'],
-        api_key=config['kuma_api_key'],
         poll_interval=config.get('kuma_poll_interval', 60),
     )
     main_module.kuma_poller.start()

@@ -851,35 +851,29 @@ def api_status_page_data(slug):
     })
 
 
-@app.route('/api/kuma-probe')
-@login_required
-def api_kuma_probe():
-    """Probe multiple Kuma endpoint + auth combinations to find what works."""
-    if kuma_poller is None:
-        return jsonify({'error': 'Kuma integration not configured'}), 503
-    try:
-        results = kuma_poller.probe()
-        return jsonify({'results': results})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 502
-
-
 @app.route('/api/kuma-test')
 @login_required
 def api_kuma_test():
-    """Diagnostic: dump the raw Kuma /api/monitors response to verify connectivity."""
+    """Diagnostic: test Kuma connectivity for each slug declared in hosts.cfg."""
     if kuma_poller is None:
-        return jsonify({'error': 'Kuma integration not configured — add kuma_url and kuma_api_key to config.yml'}), 503
-    try:
-        status_code, body_text, data = kuma_poller.fetch_raw_debug()
-        return jsonify({
-            'ok':          data is not None,
-            'http_status': status_code,
-            'body_preview': body_text[:500] if body_text else '',
-            'data':        data,
-        })
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 502
+        return jsonify({'error': 'Kuma integration not configured — add kuma_url to config.yml'}), 503
+    slugs = kuma_poller.get_slugs_from_tree()
+    if not slugs:
+        return jsonify({'error': 'No kuma hosts found in hosts.cfg — add kuma lines with kuma-slug='}), 404
+    results = []
+    for slug in slugs:
+        try:
+            status_code, body_text, data = kuma_poller.fetch_raw_debug(slug)
+            results.append({
+                'slug':        slug,
+                'ok':          data is not None and 'heartbeatList' in (data or {}),
+                'http_status': status_code,
+                'monitors':    len(data.get('heartbeatList', {})) if data else 0,
+                'body_preview': body_text[:300] if not data else None,
+            })
+        except Exception as e:
+            results.append({'slug': slug, 'ok': False, 'error': str(e)})
+    return jsonify({'results': results})
 
 
 @app.route('/api/tree')
@@ -911,10 +905,9 @@ if __name__ == '__main__':
     alerter.init(config)
 
     # Start Kuma poller (if configured)
-    if config.get('kuma_url') and config.get('kuma_api_key'):
+    if config.get('kuma_url'):
         kuma_poller = kuma_module.KumaPoller(
             url=config['kuma_url'],
-            api_key=config['kuma_api_key'],
             poll_interval=config.get('kuma_poll_interval', 60),
         )
         kuma_poller.start()

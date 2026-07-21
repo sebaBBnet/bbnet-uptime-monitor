@@ -24,8 +24,8 @@ secret_key: "auto"
 
 # Uptime Kuma integration (optional)
 # kuma_url: "https://your-kuma.example.com"   # Kuma instance base URL
-# kuma_api_key: "your-api-key-here"            # Generate in Kuma: Settings → API Keys
 # kuma_poll_interval: 60                        # Seconds between polls
+# Per-monitor config goes in hosts.cfg: kuma My-Site # kuma-id=3 kuma-slug=my-status-page
 
 # Email alerts
 alerts:
