@@ -16,8 +16,12 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 import alerter
 import database
+import kuma_poller as kuma_module
 import pinger as pinger_module
 import tree as tree_mgr
+
+# Set by wsgi.py / __main__ if kuma is configured
+kuma_poller = None
 
 CONFIG_FILE = Path('/app/config.yml')
 
@@ -847,6 +851,19 @@ def api_status_page_data(slug):
     })
 
 
+@app.route('/api/kuma-test')
+@login_required
+def api_kuma_test():
+    """Diagnostic: dump the raw Kuma /api/monitors response to verify connectivity."""
+    if kuma_poller is None:
+        return jsonify({'error': 'Kuma integration not configured — add kuma_url and kuma_api_key to config.yml'}), 503
+    try:
+        data = kuma_poller.fetch_raw()
+        return jsonify({'ok': True, 'data': data})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 502
+
+
 @app.route('/api/tree')
 @login_required
 def api_tree():
@@ -874,6 +891,15 @@ if __name__ == '__main__':
 
     # Start alerter
     alerter.init(config)
+
+    # Start Kuma poller (if configured)
+    if config.get('kuma_url') and config.get('kuma_api_key'):
+        kuma_poller = kuma_module.KumaPoller(
+            url=config['kuma_url'],
+            api_key=config['kuma_api_key'],
+            poll_interval=config.get('kuma_poll_interval', 60),
+        )
+        kuma_poller.start()
 
     # Start background pinger
     scheduler = pinger_module.PingScheduler(

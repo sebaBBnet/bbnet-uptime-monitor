@@ -102,6 +102,10 @@ class PingScheduler:
                 path     = leaf['path']
                 interval = leaf['ping_interval']
 
+                # Kuma-managed hosts — status comes from kuma_poller, not pinger
+                if leaf.get('kuma_id'):
+                    continue
+
                 if path in paused:
                     continue
 

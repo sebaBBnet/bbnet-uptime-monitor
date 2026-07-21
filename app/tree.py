@@ -38,6 +38,14 @@ def _slugify(name: str) -> str:
     return slug.strip('-')
 
 
+def _parse_flags(comment: str) -> dict:
+    """Parse 'key=value' pairs from a host-line comment string (after the #)."""
+    flags = {}
+    for m in re.finditer(r'([\w][\w-]*)=([\S]+)', comment):
+        flags[m.group(1)] = m.group(2)
+    return flags
+
+
 def _unique_path(parent: dict, candidate: str) -> str:
     """Return candidate path, appending a suffix if it already exists among siblings."""
     existing = {c['path'] for c in parent['children']}
@@ -135,6 +143,28 @@ def _parse_file(filepath: Path, default_interval: int) -> list:
         if re.match(r'^(title|group|NAME:|subparent)\b', line, re.IGNORECASE):
             continue
 
+        # ── kuma line: kuma HOSTNAME # kuma-id=N ──────────────────────────
+        m = re.match(r'^kuma\s+(\S+)(.*)', line, re.IGNORECASE)
+        if m:
+            hostname = m.group(1)
+            flags    = _parse_flags(m.group(2))
+            kuma_id_str = flags.get('kuma-id')
+            if not kuma_id_str or not kuma_id_str.isdigit():
+                print(f"[tree] WARNING: kuma host '{hostname}' has no valid kuma-id — skipping")
+                continue
+            parent = current_subsubpage if current_subsubpage is not None \
+                else current_subpage if current_subpage is not None \
+                else current_page
+            if parent is None:
+                continue
+            host_slug = _slugify(hostname)
+            candidate = f"{parent['path']}/{host_slug}"
+            path = _unique_path(parent, candidate)
+            node = _make_node(hostname, host_slug, path, 'kuma', default_interval,
+                              kuma_id=int(kuma_id_str))
+            parent['children'].append(node)
+            continue
+
         # ── host line: IP HOSTNAME [# flags] ──────────────────────────────
         m = re.match(r'^(\d{1,3}(?:\.\d{1,3}){3})\s+(\S+)', line)
         if m:
@@ -159,14 +189,16 @@ def _parse_file(filepath: Path, default_interval: int) -> list:
     return nodes
 
 
-def _make_node(name: str, slug: str, path: str, host, interval: int) -> dict:
+def _make_node(name: str, slug: str, path: str, host, interval: int,
+               kuma_id: int = None) -> dict:
     return {
-        'name': name,
-        'slug': slug,
-        'path': path,
-        'host': host,
+        'name':         name,
+        'slug':         slug,
+        'path':         path,
+        'host':         host,       # IP string | 'kuma' | None (groups)
         'ping_interval': interval,
-        'children': [],
+        'children':     [],
+        'kuma_id':      kuma_id,    # int if this is a Kuma monitor, else None
     }
 
 

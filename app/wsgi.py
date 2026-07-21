@@ -12,8 +12,10 @@ import yaml
 
 import alerter
 import database
+import kuma_poller as kuma_module
 import pinger as pinger_module
 import tree as tree_mgr
+import main as main_module
 from main import app
 
 CONFIG_FILE = Path('/app/config.yml')
@@ -34,6 +36,15 @@ else:
 
 tree_mgr.load_tree()
 alerter.init(config)
+
+# Start Kuma poller (if configured)
+if config.get('kuma_url') and config.get('kuma_api_key'):
+    main_module.kuma_poller = kuma_module.KumaPoller(
+        url=config['kuma_url'],
+        api_key=config['kuma_api_key'],
+        poll_interval=config.get('kuma_poll_interval', 60),
+    )
+    main_module.kuma_poller.start()
 
 scheduler = pinger_module.PingScheduler(
     max_workers=config.get('max_ping_workers', 50),
