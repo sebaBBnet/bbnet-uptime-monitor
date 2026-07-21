@@ -7,6 +7,7 @@ File format:
   subsubpage <slug> <Display Name>  — sub-sub-page under the current subpage
   include <filename>                — include another file (relative to hosts.cfg location)
   IP HOSTNAME # flags               — active host entry (ICMP-pinged)
+  kuma-import <slug>                — import all monitors from a Kuma status page (auto-expanded by kuma_poller)
   # anything                        — comment / disabled host (always skipped)
 
 Hierarchy rules:
@@ -143,6 +144,20 @@ def _parse_file(filepath: Path, default_interval: int) -> list:
         if re.match(r'^(title|group|NAME:|subparent)\b', line, re.IGNORECASE):
             continue
 
+        # ── kuma-import: import whole Kuma status page ────────────────────
+        m = re.match(r'^kuma-import\s+(\S+)', line, re.IGNORECASE)
+        if m:
+            slug = m.group(1)
+            target = current_subsubpage if current_subsubpage is not None \
+                else current_subpage if current_subpage is not None \
+                else current_page
+            if target is None:
+                print(f"[tree] WARNING: kuma-import '{slug}' has no page context — skipping")
+                continue
+            if slug not in target['kuma_import_slugs']:
+                target['kuma_import_slugs'].append(slug)
+            continue
+
         # ── kuma line: kuma HOSTNAME # kuma-id=N ──────────────────────────
         m = re.match(r'^kuma\s+(\S+)(.*)', line, re.IGNORECASE)
         if m:
@@ -196,14 +211,15 @@ def _parse_file(filepath: Path, default_interval: int) -> list:
 def _make_node(name: str, slug: str, path: str, host, interval: int,
                kuma_id: int = None, kuma_slug: str = None) -> dict:
     return {
-        'name':         name,
-        'slug':         slug,
-        'path':         path,
-        'host':         host,        # IP string | 'kuma' | None (groups)
-        'ping_interval': interval,
-        'children':     [],
-        'kuma_id':      kuma_id,     # int if this is a Kuma monitor, else None
-        'kuma_slug':    kuma_slug,   # Kuma status page slug, e.g. 'bbnet-status'
+        'name':              name,
+        'slug':              slug,
+        'path':              path,
+        'host':              host,        # IP string | 'kuma' | None (groups)
+        'ping_interval':     interval,
+        'children':          [],
+        'kuma_id':           kuma_id,     # int if this is a Kuma monitor, else None
+        'kuma_slug':         kuma_slug,   # Kuma status page slug, e.g. 'bbnet-status'
+        'kuma_import_slugs': [],          # slugs declared via kuma-import under this node
     }
 
 
@@ -277,6 +293,41 @@ def get_leaves_under(path: str) -> list:
     if node['host']:
         return [node]
     return get_all_leaves(node['children'])
+
+
+def get_kuma_imports(nodes: list = None) -> list:
+    """
+    Return [(parent_path, slug), ...] for every kuma-import declaration in the tree.
+    Called by kuma_poller to know what to fetch.
+    """
+    if nodes is None:
+        nodes = get_tree()
+    result = []
+    for node in nodes:
+        for slug in node.get('kuma_import_slugs', []):
+            result.append((node['path'], slug))
+        result.extend(get_kuma_imports(node['children']))
+    return result
+
+
+def inject_kuma_nodes(parent_path: str, slug: str, leaf_nodes: list):
+    """
+    Replace all children for `slug` under `parent_path` with `leaf_nodes`.
+    Called by kuma_poller after each successful fetch. Thread-safe.
+    """
+    with _lock:
+        parent = find_node(parent_path, _tree_data)
+        if parent is None:
+            return
+        # Remove previously injected nodes for this slug
+        parent['children'] = [
+            c for c in parent['children']
+            if c.get('kuma_slug') != slug
+        ]
+        # Add fresh nodes (deduplicate paths against remaining siblings)
+        for node in leaf_nodes:
+            node['path'] = _unique_path(parent, node['path'])
+            parent['children'].append(node)
 
 
 def build_breadcrumb(path: str) -> list:
